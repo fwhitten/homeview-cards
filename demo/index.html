@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HomeView cards demo</title>
+<style>
+  html, body { margin: 0; background: #0c0f17; color: #fff; font-family: -apple-system, system-ui, sans-serif; }
+  body { padding: 0; }
+  #view { display: block; }
+  .bar { position: fixed; z-index: 2000; right: 12px; bottom: 12px; display: flex; gap: 8px; }
+  .bar button { font: inherit; padding: 8px 12px; border-radius: 999px; border: 0; cursor: pointer; }
+</style>
+<script>
+  // Minimal stand-ins for the HA frontend elements the cards use.
+  customElements.define('ha-card', class extends HTMLElement {});
+  const ICONS = { 'mdi:': '' };
+  customElements.define('ha-icon', class extends HTMLElement {
+    static get observedAttributes() { return ['icon']; }
+    set icon(v) { this._i = v; this.render(); } get icon() { return this._i; }
+    attributeChangedCallback(_n, _o, v) { this.icon = v; }
+    render() { this.style.cssText = 'display:inline-flex;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px);border-radius:30%;background:currentColor;opacity:.85;flex:none'; this.title = this._i || ''; }
+  });
+  customElements.define('ha-state-icon', class extends HTMLElement {
+    connectedCallback() { this.style.cssText = 'display:inline-flex;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px);border-radius:50%;background:currentColor;opacity:.8;flex:none'; }
+  });
+</script>
+</head>
+<body>
+<homeview-view id="view"></homeview-view>
+<div class="bar"><button id="night">Toggle night</button><button id="popup">Open lights pop-up</button><button id="notify">Fire notification</button></div>
+<script type="module">
+  import '../dist/homeview-cards.js';
+
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  const st = (entity_id, state, attributes = {}) => ({ entity_id, state, attributes, last_changed: iso(now - 120000), last_updated: iso(now - 120000) });
+  const states = {
+    'light.living_ceiling': st('light.living_ceiling', 'on', { friendly_name: 'Ceiling', brightness: 166, color_mode: 'color_temp', color_temp_kelvin: 2900, supported_color_modes: ['color_temp', 'hs'] }),
+    'light.living_lamp': st('light.living_lamp', 'on', { friendly_name: 'Floor lamp', brightness: 100, color_mode: 'hs', hs_color: [280, 70], rgb_color: [191, 90, 242], supported_color_modes: ['hs'] }),
+    'light.kitchen': st('light.kitchen', 'on', { friendly_name: 'Kitchen', brightness: 255, color_mode: 'brightness', supported_color_modes: ['brightness'] }),
+    'light.bedroom': st('light.bedroom', 'off', { friendly_name: 'Bedroom', supported_color_modes: ['brightness'] }),
+    'scene.living_relax': st('scene.living_relax', '2026-10-27T18:00:00', { friendly_name: 'Relax' }),
+    'scene.movie': st('scene.movie', '2026-10-27T18:00:00', { friendly_name: 'Movie' }),
+    'scene.good_night': st('scene.good_night', '2026-10-27T18:00:00', { friendly_name: 'Good night' }),
+    'climate.living': st('climate.living', 'heat', { friendly_name: 'Living Room', current_temperature: 20.4, temperature: 21, hvac_action: 'heating', current_humidity: 48, target_temp_step: 0.5, min_temp: 7, max_temp: 30 }),
+    'weather.home': st('weather.home', 'rainy', { friendly_name: 'Home', temperature: 12 }),
+    'sun.sun': st('sun.sun', 'below_horizon', {}),
+    'camera.driveway': st('camera.driveway', 'idle', { friendly_name: 'Driveway', entity_picture: '' }),
+    'binary_sensor.driveway_person': st('binary_sensor.driveway_person', 'on', { friendly_name: 'Person' }),
+    'media_player.living': st('media_player.living', 'playing', { friendly_name: 'Living Room', media_title: 'Low Light', media_artist: 'The Quiet Rooms', media_duration: 235, media_position: 151, media_position_updated_at: iso(now), volume_level: 0.4, supported_features: 1 | 4 | 8 | 16 | 32 | 16384 | 32768 | 262144, shuffle: false, repeat: 'off' }),
+    'sensor.home_power': st('sensor.home_power', '1240', { friendly_name: 'Home power', unit_of_measurement: 'W', device_class: 'power' }),
+    'sensor.flow': st('sensor.flow', '62', { unit_of_measurement: '°C' }),
+    'sensor.return': st('sensor.return', '48', { unit_of_measurement: '°C' }),
+    'binary_sensor.flame': st('binary_sensor.flame', 'on', {}),
+    'sensor.bed_temp': st('sensor.bed_temp', '21.6', { device_class: 'temperature', unit_of_measurement: '°C' }),
+    'sensor.bed_hum': st('sensor.bed_hum', '52', { device_class: 'humidity', unit_of_measurement: '%' }),
+    'sensor.dishwasher': st('sensor.dishwasher', '62', { friendly_name: 'Dishwasher', unit_of_measurement: '%' }),
+    'sensor.dishwasher_left': st('sensor.dishwasher_left', '1h 12m left', {}),
+    'vacuum.robot': st('vacuum.robot', 'cleaning', { friendly_name: 'Vacuum', fan_speed: 'turbo', fan_speed_list: ['quiet', 'balanced', 'turbo', 'max'], supported_features: 4 | 8 | 16 | 32 | 512 | 8192 | 16384 }),
+    'sensor.robot_battery': st('sensor.robot_battery', '78', { device_class: 'battery', unit_of_measurement: '%' }),
+    'calendar.family': st('calendar.family', 'off', { friendly_name: 'Family' }),
+    'lock.front': st('lock.front', 'locked', { friendly_name: 'Front door' }),
+    'sensor.bins': st('sensor.bins', 'tomorrow', { friendly_name: 'Bins' }),
+  };
+  const entities = {
+    'light.living_ceiling': { entity_id: 'light.living_ceiling', area_id: 'living' },
+    'light.living_lamp': { entity_id: 'light.living_lamp', area_id: 'living' },
+    'scene.living_relax': { entity_id: 'scene.living_relax', area_id: 'living' },
+    'scene.movie': { entity_id: 'scene.movie', area_id: 'living' },
+    'sensor.bed_temp': { entity_id: 'sensor.bed_temp', area_id: 'bedroom' },
+    'sensor.bed_hum': { entity_id: 'sensor.bed_hum', area_id: 'bedroom' },
+  };
+  const series = (n, f) => Array.from({ length: n }, (_, i) => f(i));
+  const hourly = series(8, (i) => ({ datetime: iso(now + i * 3600e3), condition: i < 2 ? 'rainy' : 'cloudy', temperature: 12 - i * 0.5, precipitation: i < 2 ? 0.6 - i * 0.3 : 0, precipitation_probability: i < 2 ? 80 - i * 25 : 10 }));
+  const daily = [{ datetime: iso(now), condition: 'rainy', temperature: 14, templow: 8 }];
+
+  const log = [];
+  const hass = {
+    states, entities, devices: {}, areas: { living: { area_id: 'living', name: 'Living Room' }, bedroom: { area_id: 'bedroom', name: 'Bedroom' }, kitchen: { area_id: 'kitchen', name: 'Kitchen' }, hall: { area_id: 'hall', name: 'Hall' } },
+    config: { time_zone: 'Europe/London', unit_system: { temperature: '°C', length: 'km' } },
+    themes: { darkMode: true, theme: 'default' }, language: 'en-GB', locale: { language: 'en-GB', time_format: '24' },
+    user: { id: 'demo', name: 'Demo', is_admin: true },
+    hassUrl: (p = '') => p,
+    localize: (k) => k,
+    formatEntityState: (s) => s.state + (s.attributes.unit_of_measurement && s.attributes.unit_of_measurement !== '%' ? ` ${s.attributes.unit_of_measurement}` : s.attributes.unit_of_measurement || ''),
+    formatEntityAttributeValue: (s, a) => String(s.attributes[a]),
+    callService: async (d, s, data, target, _n, ret) => {
+      log.push([d, s, data, target]); console.log('service', d, s, data, target);
+      if (d === 'calendar' && s === 'get_events') return { response: { [target.entity_id]: { events: [
+        { start: new Date(now - 3600e3).toISOString(), end: new Date(now - 1800e3).toISOString(), summary: 'Design review' },
+        { start: new Date(now + 2880e3).toISOString(), end: new Date(now + 6480e3).toISOString(), summary: 'Swimming', location: 'Leisure centre' },
+        { start: new Date(now + 8000e3).toISOString(), end: new Date(now + 9000e3).toISOString(), summary: 'Bins out' } ] } } };
+      return {};
+    },
+    callWS: async (msg) => {
+      if (msg.type === 'history/history_during_period') {
+        const out = {};
+        for (const id of msg.entity_ids) {
+          out[id] = series(40, (i) => ({ s: id.includes('power') ? String(400 + Math.abs(Math.sin(i / 3)) * 2500) : id.includes('flame') ? (i % 7 < 3 ? 'on' : 'off') : String(45 + Math.sin(i / 4) * 15), lu: (now - (40 - i) * 18 * 60e3) / 1000, a: { current_temperature: 19 + Math.sin(i / 5) * 1.5, temperature: i < 12 ? 18 : 21, hvac_action: i % 9 < 4 ? 'heating' : 'idle' } }));
+        }
+        return out;
+      }
+      if (msg.type === 'recorder/statistics_during_period') {
+        const out = {};
+        for (const id of msg.statistic_ids) out[id] = series(30, (i) => ({ start: now - (30 - i) * 300e3, end: now - (29 - i) * 300e3, mean: id.includes('temp') ? 21 + Math.sin(i / 6) : 50 + Math.cos(i / 5) * 5, change: 0.3 }));
+        return out;
+      }
+      throw new Error('not in demo: ' + msg.type);
+    },
+    callApi: async () => ({}),
+    connection: {
+      subscribeMessage: async (cb, msg) => {
+        if (msg.type === 'weather/subscribe_forecast') setTimeout(() => cb({ type: msg.forecast_type, forecast: msg.forecast_type === 'hourly' ? hourly : daily }), 50);
+        return async () => {};
+      },
+    },
+  };
+
+  const cards = [
+    { type: 'custom:homeview-clock-card', view_layout: { column: 1, row: 1, column_span: 2, row_span: 2 } },
+    { type: 'custom:homeview-weather-card', entity: 'weather.home', view_layout: { column: 3, row: 1, column_span: 2, row_span: 2 } },
+    { type: 'custom:homeview-thermostat-card', entity: 'climate.living', view_layout: { column: 5, row: 1, column_span: 2, row_span: 1 } },
+    { type: 'custom:homeview-energy-card', power_entity: 'sensor.home_power', view_layout: { column: 5, row: 2, column_span: 1, row_span: 1 } },
+    { type: 'custom:homeview-comfort-card', area: 'bedroom', view_layout: { column: 6, row: 2, column_span: 1, row_span: 1 } },
+    { type: 'custom:homeview-camera-card', entity: 'camera.driveway', view: 'snapshot', events: [{ entity: 'binary_sensor.driveway_person', label: 'Person', icon: 'mdi:account' }], view_layout: { column: 1, row: 3, column_span: 2, row_span: 2 } },
+    { type: 'custom:homeview-media-card', entity: 'media_player.living', view_layout: { column: 3, row: 3, column_span: 2, row_span: 1 } },
+    { type: 'custom:homeview-light-card', area: 'living', view_layout: { column: 5, row: 3 } },
+    { type: 'custom:homeview-light-card', entity: 'light.kitchen', view_layout: { column: 6, row: 3 } },
+    { type: 'custom:homeview-boiler-card', flow_temp_entity: 'sensor.flow', return_temp_entity: 'sensor.return', flame_entity: 'binary_sensor.flame', zones: [{ name: 'Radiators', climate_entity: 'climate.living' }], view_layout: { column: 3, row: 4 } },
+    { type: 'custom:homeview-light-card', entity: 'light.bedroom', view_layout: { column: 4, row: 4 } },
+    { type: 'custom:homeview-progress-card', entity: 'sensor.dishwasher', secondary_entities: ['sensor.dishwasher_left'], view_layout: { column: 5, row: 4, column_span: 2, row_span: 1 } },
+  ];
+
+  const helpers = { createCardElement(cfg) { const el = document.createElement(cfg.type.replace('custom:', '')); el.setConfig(cfg); return el; } };
+  window.loadCardHelpers = async () => helpers;
+
+  // Stand-in for HA's hui-card wrapper, which carries the config the view reads.
+  const inner = [];
+  const els = cards.map((cfg) => {
+    const card = helpers.createCardElement(cfg);
+    inner.push(card);
+    const wrap = document.createElement('div');
+    wrap.style.height = '100%';
+    wrap.config = cfg;
+    wrap.getGridOptions = () => card.getGridOptions?.() ?? {};
+    Object.defineProperty(wrap, 'hass', { set: (h) => (card.hass = h) });
+    wrap.appendChild(card);
+    card.hass = hass;
+    return wrap;
+  });
+
+  const view = document.getElementById('view');
+  view.setConfig({
+    header: { greeting: true, chips: [
+      { entity: 'lock.front', name: 'Doors locked', icon: 'mdi:lock', color: '#4CD07D' },
+      { entity: 'sensor.bins', name: 'Bins {state}', icon: 'mdi:trash-can', attention_when: { state: 'tomorrow' } },
+    ] },
+    notifications: { style: 'fullscreen', notifications: [{ type: 'success', title: 'Washing finished', message: 'Time to hang it out.', entity: 'sensor.dishwasher', state: '100' }] },
+  });
+  view.hass = hass;
+  view.cards = els;
+  view.lovelace = { editMode: false, config: {} };
+  window.hass = hass; window.serviceLog = log;
+
+  const refresh = () => {
+    const next = { ...hass, states: { ...hass.states } };
+    Object.assign(hass, next);
+    view.hass = { ...hass };
+    els.forEach((e) => (e.hass = view.hass));
+  };
+  document.getElementById('night').onclick = () => {
+    hass.states['input_boolean.night'] = st('input_boolean.night', hass.states['input_boolean.night']?.state === 'on' ? 'off' : 'on');
+    view.setConfig({ ...view.config, night_entity: 'input_boolean.night', header: { greeting: true, chips: [] } });
+    refresh();
+  };
+  document.getElementById('popup').onclick = () => inner[7].run('tap');
+  document.getElementById('notify').onclick = () => { hass.states['sensor.dishwasher'] = st('sensor.dishwasher', '100', { friendly_name: 'Dishwasher', unit_of_measurement: '%' }); refresh(); };
+</script>
+</body>
+</html>

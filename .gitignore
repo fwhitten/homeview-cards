@@ -1,0 +1,6 @@
+*.tsbuildinfo
+.DS_Store
+.claude/
+.harness/
+dist/
+node_modules/

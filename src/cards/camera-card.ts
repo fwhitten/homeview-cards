@@ -1,0 +1,319 @@
+import { css, html, nothing } from 'lit';
+import { state } from 'lit/decorators.js';
+import { HomeViewCard, type BaseCardConfig } from '../core/base-card';
+import type { GridOptions, HassEntity } from '../core/types';
+import { duration, isUnavailable, time } from '../core/format';
+import { defineElement, registerCard } from '../core/register';
+
+export interface CameraEvent {
+  /** A binary_sensor or event entity that marks a detection. */
+  entity: string;
+  label?: string;
+  icon?: string;
+}
+
+export interface CameraCardConfig extends BaseCardConfig {
+  entity: string;
+  /** `live` streams when the camera supports it, `snapshot` refreshes a still. */
+  view?: 'live' | 'snapshot';
+  /** Seconds between snapshot refreshes. */
+  refresh?: number;
+  events?: CameraEvent[];
+  /** Only show detections from the last N minutes. */
+  event_window?: number;
+  show_live_badge?: boolean;
+  show_time?: boolean;
+}
+
+let streamLoader: Promise<unknown> | undefined;
+
+/**
+ * Make sure HA's camera stream element is registered. It loads with the
+ * picture-entity card, so creating one (never attached) pulls it in.
+ */
+const ensureStreamElement = (): Promise<unknown> => {
+  if (customElements.get('ha-camera-stream')) return Promise.resolve();
+  streamLoader ??= (async () => {
+    const helpers = await window.loadCardHelpers?.();
+    helpers?.createCardElement({ type: 'picture-entity', entity: 'camera.homeview_loader', camera_view: 'live' });
+    await Promise.race([customElements.whenDefined('ha-camera-stream'), new Promise((r) => setTimeout(r, 5000))]);
+  })();
+  return streamLoader;
+};
+
+/** Camera (design A): full-bleed feed, LIVE badge, and the latest detection in a glass chip. */
+export class HomeViewCameraCard extends HomeViewCard<CameraCardConfig> {
+  @state() private streamReady = !!customElements.get('ha-camera-stream');
+  @state() private snapshotTick = 0;
+  @state() private clock = new Date();
+  private timers: number[] = [];
+
+  static getConfigForm() {
+    return {
+      schema: [
+        { name: 'entity', required: true, selector: { entity: { domain: 'camera' } } },
+        { name: 'name', selector: { text: {} } },
+        { name: 'view', default: 'live', selector: { select: { options: ['live', 'snapshot'] } } },
+        { name: 'refresh', default: 10, selector: { number: { min: 2, max: 300, unit_of_measurement: 's' } } },
+        {
+          name: 'events',
+          selector: {
+            object: {
+              multiple: true,
+              label_field: 'label',
+              fields: {
+                entity: { label: 'Detection entity', required: true, selector: { entity: { domain: ['binary_sensor', 'event'] } } },
+                label: { label: 'Label', selector: { text: {} } },
+                icon: { label: 'Icon', selector: { icon: {} } },
+              },
+            },
+          },
+        },
+        { name: 'event_window', default: 30, selector: { number: { min: 1, max: 1440, unit_of_measurement: 'min' } } },
+        {
+          type: 'grid',
+          name: '',
+          schema: [
+            { name: 'show_live_badge', default: true, selector: { boolean: {} } },
+            { name: 'show_time', default: true, selector: { boolean: {} } },
+          ],
+        },
+        { name: 'tap_action', selector: { ui_action: {} } },
+      ],
+    };
+  }
+
+  static getStubConfig(_hass: unknown, entities: string[], fallback: string[]) {
+    return { entity: [...entities, ...fallback].find((e) => e.startsWith('camera.')) ?? '' };
+  }
+
+  protected validate(config: CameraCardConfig): void {
+    if (!config.entity) throw new Error('Set a camera entity');
+  }
+
+  protected defaults(): Partial<CameraCardConfig> {
+    return { view: 'live', refresh: 10, event_window: 30, show_live_badge: true, show_time: true };
+  }
+
+  protected watched() {
+    return [this.config.entity, ...(this.config.events ?? []).map((e) => e.entity)];
+  }
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    if (this.config?.view !== 'snapshot' && !this.streamReady) {
+      void ensureStreamElement().then(() => (this.streamReady = !!customElements.get('ha-camera-stream')));
+    }
+    this.timers.push(window.setInterval(() => (this.clock = new Date()), 1000));
+    this.timers.push(window.setInterval(() => this.snapshotTick++, (this.config?.refresh ?? 10) * 1000));
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.timers.forEach((t) => window.clearInterval(t));
+    this.timers = [];
+  }
+
+  private latestEvent(): { ev: CameraEvent; st: HassEntity; ago: number } | undefined {
+    const windowMs = (this.config.event_window ?? 30) * 60_000;
+    let best: { ev: CameraEvent; st: HassEntity; ago: number } | undefined;
+    for (const ev of this.config.events ?? []) {
+      const st = this.stateObj(ev.entity);
+      if (!st || isUnavailable(st)) continue;
+      // An event entity's state is the time it last fired; a binary sensor counts while on or recently on.
+      const at = ev.entity.startsWith('event.') ? Date.parse(st.state) : Date.parse(st.last_changed);
+      if (!Number.isFinite(at)) continue;
+      if (ev.entity.startsWith('binary_sensor.') && st.state !== 'on' && Date.now() - at > windowMs) continue;
+      const ago = Date.now() - at;
+      if (ago > windowMs) continue;
+      if (!best || ago < best.ago) best = { ev, st, ago };
+    }
+    return best;
+  }
+
+  private snapshotUrl(st: HassEntity): string {
+    const pic = st.attributes.entity_picture as string | undefined;
+    if (!pic) return '';
+    return `${this.hass!.hassUrl(pic)}${pic.includes('?') ? '&' : '?'}t=${this.snapshotTick}`;
+  }
+
+  render() {
+    if (!this.hass) return nothing;
+    const st = this.stateObj();
+    const name = this.config.name ?? st?.attributes.friendly_name ?? this.config.entity;
+    if (!st || isUnavailable(st)) {
+      return html`<ha-card class="tile">
+        <div class="in">
+          <span class="round gl badge"><ha-icon icon="mdi:camera-off-outline"></ha-icon></span>
+          <div><div class="name">${name}</div><div class="sub">Offline${st ? ` · ${duration(Date.now() - Date.parse(st.last_changed))}` : ''}</div></div>
+        </div>
+      </ha-card>`;
+    }
+    const live = this.config.view !== 'snapshot' && this.streamReady;
+    const event = this.latestEvent();
+    const small = this.size === 's';
+    return html`
+      <ha-card class="tile cam ${this.clickable ? 'clickable' : ''}" tabindex="0" role="button" aria-label="${name} camera">
+        ${live
+          ? html`<ha-camera-stream class="feed" .hass=${this.hass} .stateObj=${st} muted .controls=${false} fit-mode="cover"></ha-camera-stream>`
+          : html`<img class="feed" src=${this.snapshotUrl(st)} alt="" />`}
+        <div class="scan" aria-hidden="true"></div>
+        <div class="fade top" aria-hidden="true"></div>
+        <div class="fade bottom" aria-hidden="true"></div>
+        <div class="bar head">
+          <div class="name">${name}</div>
+          ${this.config.show_live_badge
+            ? small
+              ? html`<span class="dot" aria-label="Live"></span>`
+              : html`<span class="live"><i></i>LIVE</span>`
+            : nothing}
+        </div>
+        <div class="bar foot">
+          ${event
+            ? html`<span class="event gl"><ha-icon .icon=${event.ev.icon ?? event.st.attributes.icon ?? 'mdi:motion-sensor'}></ha-icon>${event.ev.label ??
+                event.st.attributes.friendly_name}${small ? '' : ` · ${event.ago < 60_000 ? 'now' : `${duration(event.ago)} ago`}`}</span>`
+            : small
+              ? html`<span class="sub light">Clear · ${time(this.hass, this.clock)}</span>`
+              : html`<span></span>`}
+          ${this.config.show_time && !small ? html`<span class="clock">${time(this.hass, this.clock, true)}</span>` : nothing}
+        </div>
+      </ha-card>
+    `;
+  }
+
+  getGridOptions(): GridOptions {
+    return { columns: 12, rows: 6, min_columns: 6, min_rows: 3 };
+  }
+
+  getCardSize(): number {
+    return 7;
+  }
+
+  static styles = [
+    ...HomeViewCard.styles,
+    css`
+      .cam {
+        background: #1c1f1c;
+        color: #fff;
+      }
+      .feed {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        --video-max-height: 100%;
+      }
+      .scan {
+        position: absolute;
+        inset: 0;
+        background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 1px, rgba(0, 0, 0, 0) 1px 3px),
+          radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 55%, rgba(0, 0, 0, 0.4) 100%);
+        pointer-events: none;
+      }
+      .fade {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 96px;
+        pointer-events: none;
+      }
+      .fade.top {
+        top: 0;
+        background: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0));
+      }
+      .fade.bottom {
+        bottom: 0;
+        background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.55));
+      }
+      .bar {
+        position: absolute;
+        left: 20px;
+        right: 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+      }
+      .head {
+        top: 18px;
+      }
+      .foot {
+        bottom: 18px;
+      }
+      .live {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        height: 32px;
+        padding: 0 12px;
+        border-radius: 999px;
+        background: var(--hv-c-alert);
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        flex: none;
+      }
+      .live i,
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #fff;
+        animation: pulse 1.6s ease-in-out infinite;
+      }
+      .dot {
+        width: 12px;
+        height: 12px;
+        background: var(--hv-c-alert);
+        box-shadow: 0 0 0 3px rgba(229, 72, 77, 0.35);
+      }
+      .event {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 44px;
+        padding: 0 16px 0 12px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.16);
+        font-size: 17px;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        --mdc-icon-size: 20px;
+      }
+      .clock,
+      .light {
+        font-size: 17px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.82);
+      }
+      .badge {
+        width: 48px;
+        height: 48px;
+        color: var(--_ink2);
+      }
+      @keyframes pulse {
+        50% {
+          opacity: 0.35;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .live i,
+        .dot {
+          animation: none;
+        }
+      }
+    `,
+  ];
+}
+
+defineElement('homeview-camera-card', HomeViewCameraCard);
+registerCard({
+  type: 'homeview-camera-card',
+  name: 'HomeView Camera',
+  description: 'Full-bleed live camera with the latest detection in a glass chip.',
+  getEntitySuggestion: (_hass, entityId) =>
+    entityId.startsWith('camera.') ? { config: { type: 'custom:homeview-camera-card', entity: entityId } } : null,
+  docs: 'camera',
+});
