@@ -386,9 +386,11 @@ chips:
 | `show_name` / `show_state` | `false` / `true` | Both on gives two lines: name above, state below |
 | `show_icon` | `true` | |
 | `show_entity_picture` | `false` | Person photos, media artwork |
+| `state_content` | `state` | One or a list of `state`, `name`, `last_changed`, `last_updated`, or any attribute (e.g. `message` for a calendar) |
+| `color` | `state` | Icon colour: an HA colour name (`amber`, `red`, `primary`…), `state`, `none`, or any CSS colour |
 | `visibility` | | The same conditions as HA badges and cards: `state`, `numeric_state`, `screen`, `user`, `and`, `or`, `not` |
 | `attention_when` / `success_when` / `alert_when` | | Fills the chip amber, green, or red and pulsing |
-| `tap_action` / `hold_action` | more-info | Any HA action, including `navigate` |
+| `tap_action` / `hold_action` / `double_tap_action` | more-info | Any HA action, including `navigate` (hash paths such as `#lights-pop-up` work for Bubble Card pop-ups) |
 
 ### Notifications
 

@@ -20,8 +20,10 @@ export interface Chip {
   /** The name to show, or (with neither show_name nor show_state set) the whole label, where {state} is replaced. */
   name?: string;
   icon?: string;
-  /** The icon circle's colour while the chip is calm. */
+  /** Icon colour: a Home Assistant colour name (amber, red, primary…), `state`, `none`, or any CSS colour. */
   color?: string;
+  /** What the state line shows: state, name, last_changed, last_updated, or attribute names. */
+  state_content?: string | string[];
   show_name?: boolean;
   show_state?: boolean;
   show_icon?: boolean;
@@ -36,6 +38,7 @@ export interface Chip {
   alert_when?: StateTest;
   tap_action?: ActionConfig;
   hold_action?: ActionConfig;
+  double_tap_action?: ActionConfig;
 }
 
 export interface ChipsCardConfig extends BaseCardConfig {
@@ -66,6 +69,42 @@ const ACTIVE_COLOR: Record<string, string> = {
   vacuum: '#40C8C0',
   media_player: '#BF5AF2',
 };
+/** Home Assistant's theme colour names (frontend THEME_COLORS), with HomeView fallbacks. */
+const THEME_COLORS: Record<string, string> = {
+  primary: 'var(--primary-color)',
+  accent: 'var(--accent-color)',
+  red: '#E5484D',
+  pink: '#FF6FB1',
+  purple: '#BF5AF2',
+  'deep-purple': '#7D6BFF',
+  indigo: '#5E5CE6',
+  blue: '#4C8DFF',
+  'light-blue': '#5AC8FA',
+  cyan: '#40C8E0',
+  teal: '#40C8C0',
+  green: '#4CD07D',
+  'light-green': '#8BD66B',
+  lime: '#C6E05A',
+  yellow: '#FFD60A',
+  amber: '#FFC94D',
+  orange: '#FF8A3D',
+  'deep-orange': '#FF6A3D',
+  brown: '#A2845E',
+  'light-grey': '#C7C7CC',
+  grey: '#8E8E93',
+  'dark-grey': '#636366',
+  'blue-grey': '#7D8FA3',
+  black: '#000000',
+  white: '#FFFFFF',
+  'primary-text': 'var(--primary-text-color)',
+  'secondary-text': 'var(--secondary-text-color)',
+  disabled: 'var(--disabled-text-color)',
+};
+
+/** A named colour reads the theme's own variable first, as Home Assistant does. */
+const themeColor = (name: string): string =>
+  name in THEME_COLORS ? (THEME_COLORS[name].startsWith('var(') ? THEME_COLORS[name] : `var(--${name}-color, ${THEME_COLORS[name]})`) : name;
+
 const ACTIVE_STATES = ['on', 'open', 'unlocked', 'heat', 'heating', 'cleaning', 'playing', 'triggered', 'armed_away', 'armed_home', 'armed_night'];
 
 const test = {
@@ -94,11 +133,27 @@ const EDITOR: EditorSpec = {
             entity: { label: 'Entity', selector: { entity: {} } },
             name: { label: 'Name', selector: { text: {} } },
             icon: { label: 'Icon', selector: { icon: {} } },
-            color: { label: 'Icon colour (any CSS colour)', selector: { text: {} } },
+            color: { label: 'Icon colour', selector: { ui_color: { default_color: 'state', include_state: true, include_none: true } } },
             show_name: { label: 'Show name', selector: { boolean: {} } },
             show_state: { label: 'Show state', selector: { boolean: {} } },
             show_icon: { label: 'Show icon', selector: { boolean: {} } },
             show_entity_picture: { label: 'Show entity picture (people, media)', selector: { boolean: {} } },
+            state_content: {
+              label: 'State shows (pick, or type an attribute such as message)',
+              selector: {
+                select: {
+                  multiple: true,
+                  custom_value: true,
+                  reorder: true,
+                  options: [
+                    { value: 'state', label: 'State' },
+                    { value: 'name', label: 'Name' },
+                    { value: 'last_changed', label: 'Last changed' },
+                    { value: 'last_updated', label: 'Last updated' },
+                  ],
+                },
+              },
+            },
             badge: { label: 'Count badge (style B)', selector: { boolean: {} } },
             visibility: { label: 'Visibility conditions (same as Home Assistant badges)', selector: { object: {} } },
             attention_when: { label: 'Amber when', selector: test },
@@ -106,6 +161,7 @@ const EDITOR: EditorSpec = {
             alert_when: { label: 'Red and pulsing when', selector: test },
             tap_action: { label: 'Tap', selector: { ui_action: {} } },
             hold_action: { label: 'Hold', selector: { ui_action: {} } },
+            double_tap_action: { label: 'Double tap', selector: { ui_action: {} } },
           },
         },
       },
@@ -129,6 +185,7 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
   @state() private expanded?: number;
   private timer?: number;
   private holdTimer?: number;
+  private tapTimer?: number;
   private held = false;
 
   static getConfigElement() {
@@ -190,20 +247,51 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
     return 'calm';
   }
 
-  /** [name line, state line]. Either can be empty. */
-  private lines(c: Chip, st?: HassEntity): [string, string] {
-    const formatted = st ? this.hass!.formatEntityState(st) : '';
-    const name = c.name ?? st?.attributes.friendly_name ?? '';
-    // A plain label from earlier HomeView configs: "Bins {state}".
-    if (c.show_name === undefined && c.show_state === undefined && c.name) return ['', c.name.replace('{state}', formatted)];
-    const showName = c.show_name ?? false;
-    const showState = c.show_state ?? true;
-    return [showName ? name : '', showState ? formatted : ''];
+  private relative(iso?: string): string {
+    const t = iso ? Date.parse(iso) : NaN;
+    if (!Number.isFinite(t)) return '';
+    const secs = Math.round((t - Date.now()) / 1000);
+    const fmt = new Intl.RelativeTimeFormat(this.hass!.locale?.language, { numeric: 'auto' });
+    const abs = Math.abs(secs);
+    if (abs < 60) return fmt.format(secs, 'second');
+    if (abs < 3600) return fmt.format(Math.round(secs / 60), 'minute');
+    if (abs < 86400) return fmt.format(Math.round(secs / 3600), 'hour');
+    return fmt.format(Math.round(secs / 86400), 'day');
   }
 
-  private act(c: Chip, kind: 'tap' | 'hold') {
+  /** The state line, following state_content like Home Assistant's badges and tiles. */
+  private stateText(c: Chip, st: HassEntity | undefined, name: string): string {
+    if (!st) return '';
+    const content = c.state_content === undefined ? ['state'] : Array.isArray(c.state_content) ? c.state_content : [c.state_content];
+    return content
+      .map((key) => {
+        if (key === 'state') return this.hass!.formatEntityState(st);
+        if (key === 'name') return name;
+        if (key === 'last_changed' || key === 'last_updated') return this.relative(st[key]);
+        if (key === 'last-changed' || key === 'last-updated') return this.relative(st[key.replace('-', '_') as 'last_changed']);
+        const value = st.attributes[key];
+        return value === undefined || value === null || value === '' ? '' : this.hass!.formatEntityAttributeValue(st, key);
+      })
+      .filter(Boolean)
+      .join(' · ');
+  }
+
+  /** [name line, state line]. Either can be empty. */
+  private lines(c: Chip, st?: HassEntity): [string, string] {
+    const name = (typeof c.name === 'string' ? c.name : undefined) ?? st?.attributes.friendly_name ?? '';
+    // A plain label from earlier HomeView configs: "Bins {state}".
+    if (c.show_name === undefined && c.show_state === undefined && c.state_content === undefined && typeof c.name === 'string' && c.name) {
+      return ['', c.name.replace('{state}', st ? this.hass!.formatEntityState(st) : '')];
+    }
+    const showName = c.show_name ?? false;
+    const showState = c.show_state ?? true;
+    return [showName ? name : '', showState ? this.stateText(c, st, name) : ''];
+  }
+
+  private act(c: Chip, kind: 'tap' | 'hold' | 'double_tap') {
     if (!this.hass || this.preview) return;
-    const action = kind === 'tap' ? c.tap_action ?? (c.entity ? { action: 'more-info' as const } : undefined) : c.hold_action ?? (c.entity ? { action: 'more-info' as const } : undefined);
+    const fallback = c.entity && kind !== 'double_tap' ? { action: 'more-info' as const } : undefined;
+    const action = (kind === 'tap' ? c.tap_action : kind === 'hold' ? c.hold_action : c.double_tap_action) ?? fallback;
     void runAction({ node: this, hass: this.hass, entity: c.entity }, action);
   }
 
@@ -228,12 +316,27 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
         window.setTimeout(() => this.expanded === i && (this.expanded = undefined), 4000);
         return;
       }
+      if (c.double_tap_action && c.double_tap_action.action !== 'none') {
+        // Wait briefly to tell a single tap from a double tap.
+        if (this.tapTimer) {
+          window.clearTimeout(this.tapTimer);
+          this.tapTimer = undefined;
+          this.act(c, 'double_tap');
+          return;
+        }
+        this.tapTimer = window.setTimeout(() => {
+          this.tapTimer = undefined;
+          this.act(c, 'tap');
+        }, 250);
+        return;
+      }
       this.act(c, 'tap');
     };
   }
 
   private iconColor(c: Chip, st?: HassEntity): string | undefined {
-    if (c.color) return c.color;
+    if (c.color === 'none') return undefined;
+    if (c.color && c.color !== 'state') return themeColor(c.color);
     if (!st) return undefined;
     const domain = st.entity_id.split('.')[0];
     return ACTIVE_STATES.includes(st.state) ? ACTIVE_COLOR[domain] : undefined;
@@ -264,7 +367,7 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
     if (style === 'compact' && this.expanded !== i) {
       const n = c.badge && st ? Number(st.state) : NaN;
       return html`<button class="dotc ${filled ? '' : 'gl'} ${level === 'alert' ? 'pulse' : ''}" aria-label=${label} style=${filled ? `background:${filled.bg};color:${filled.ink}` : ''} @pointerdown=${handlers.down} @click=${handlers.click}>
-        ${this.visual(c, st, level)}${Number.isFinite(n) && n > 0 ? html`<em style="background:${filled ? filled.ink : c.color ?? 'var(--hv-c-progress)'};color:${filled ? filled.bg : '#fff'}">${n}</em>` : nothing}
+        ${this.visual(c, st, level)}${Number.isFinite(n) && n > 0 ? html`<em style="background:${filled ? filled.ink : this.iconColor(c, st) ?? 'var(--hv-c-progress)'};color:${filled ? filled.bg : '#fff'}">${n}</em>` : nothing}
       </button>`;
     }
     const two = !!nameLine && !!stateLine;

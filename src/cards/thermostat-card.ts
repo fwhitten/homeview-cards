@@ -193,7 +193,7 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
     const short = off ? 'Off' : style ? style.verb.replace(/ to$/, '') : 'Idle';
     const stepperH = html`<div class="stepper-h gl">
       ${minus}
-      <div class="tgt"><div class="tv">${tgtText || '—'}</div><div class="tl">${this.pendingTarget != null ? 'setting' : 'target'}</div></div>
+      <div class="tgt" aria-label="Target ${tgtText}"><div class="tv ${this.pendingTarget != null ? 'pending' : ''}">${tgtText || '—'}</div></div>
       ${plus}
     </div>`;
     const header = html`
@@ -218,7 +218,7 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
               <span class="huge">${heroText}</span>
               <div class="stepper gl">
                 ${plus}
-                <div class="tgt"><div class="tv">${tgtText || '—'}</div><div class="tl">target</div></div>
+                <div class="tgt" aria-label="Target ${tgtText}"><div class="tv ${this.pendingTarget != null ? 'pending' : ''}">${tgtText || '—'}</div></div>
                 ${minus}
               </div>
             </div>
@@ -415,6 +415,22 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
         font-size: 26px;
         font-weight: 600;
         line-height: 1;
+        transition: opacity 0.2s ease;
+      }
+      /* While a new target is waiting to be sent, it pulses gently instead of saying so. */
+      .tv.pending {
+        animation: pending 1s ease-in-out infinite;
+      }
+      @keyframes pending {
+        50% {
+          opacity: 0.55;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .tv.pending {
+          animation: none;
+          opacity: 0.6;
+        }
       }
       .tl,
       .legend,
