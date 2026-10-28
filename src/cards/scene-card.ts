@@ -5,6 +5,7 @@ import type { GridOptions, HomeAssistant } from '../core/types';
 import { inkFor, parseHex } from '../core/color';
 import { defineElement, registerCard } from '../core/register';
 import { haptic } from '../core/events';
+import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
 export interface SceneItem {
   entity: string;
@@ -51,46 +52,49 @@ const inWindow = (item: SceneItem, now: Date): boolean => {
   return a !== undefined ? t >= a : t < b!;
 };
 
+const EDITOR: EditorSpec = {
+  schema: (c) => [
+    { name: 'style', selector: choose([['tile', 'A: one scene as a tile'], ['suggested', 'C: up to four, suggested for now']], 'list') },
+    ...((c.style ?? 'tile') === 'tile'
+      ? [
+          { name: 'entity', required: true, selector: { entity: { domain: ['scene', 'script', 'automation', 'button', 'input_button'] } } },
+          { type: 'grid', name: '', schema: [{ name: 'name', selector: { text: {} } }, { name: 'icon', selector: { icon: {} }, context: { icon_entity: 'entity' } }, { name: 'color', selector: { text: {} } }, { name: 'note', selector: { text: {} } }] },
+        ]
+      : [
+          { name: 'name', selector: { text: {} } },
+          {
+            name: 'scenes',
+            selector: {
+              object: {
+                multiple: true,
+                label_field: 'entity',
+                fields: {
+                  entity: { label: 'Scene, script or automation', required: true, selector: { entity: { domain: ['scene', 'script', 'automation', 'button', 'input_button'] } } },
+                  name: { label: 'Name', selector: { text: {} } },
+                  icon: { label: 'Icon', selector: { icon: {} } },
+                  color: { label: 'Colour', selector: { text: {} } },
+                  after: { label: 'Suggest from', selector: { time: {} } },
+                  before: { label: 'Suggest until', selector: { time: {} } },
+                },
+              },
+            },
+          },
+        ]),
+    appearanceSection,
+    actionsSection(),
+    layoutSection,
+  ],
+  labels: { entity: 'Scene', note: 'What it does', scenes: 'Scenes' },
+  helpers: { scenes: 'Up to four that fit the time now are shown', tap_action: 'Default: runs the scene' },
+};
+
 /** Scenes (designs A and C): one-tap tiles, or up to four suggested for the time of day. */
 export class HomeViewSceneCard extends HomeViewCard<SceneCardConfig> {
   @state() private justRan?: string;
   private clearTimer?: number;
 
-  static getConfigForm() {
-    return {
-      schema: [
-        { name: 'style', default: 'tile', selector: { select: { options: [{ value: 'tile', label: 'A: one scene as a tile' }, { value: 'suggested', label: 'C: up to four, suggested for now' }] } } },
-        { name: 'entity', selector: { entity: { domain: ['scene', 'script', 'automation', 'button', 'input_button'] } } },
-        {
-          type: 'grid',
-          name: '',
-          schema: [
-            { name: 'name', selector: { text: {} } },
-            { name: 'icon', selector: { icon: {} }, context: { icon_entity: 'entity' } },
-            { name: 'color', selector: { text: {} } },
-            { name: 'note', selector: { text: {} } },
-          ],
-        },
-        {
-          name: 'scenes',
-          selector: {
-            object: {
-              multiple: true,
-              label_field: 'entity',
-              fields: {
-                entity: { label: 'Scene', required: true, selector: { entity: { domain: ['scene', 'script', 'automation', 'button', 'input_button'] } } },
-                name: { label: 'Name', selector: { text: {} } },
-                icon: { label: 'Icon', selector: { icon: {} } },
-                color: { label: 'Colour', selector: { text: {} } },
-                after: { label: 'Suggest from', selector: { time: {} } },
-                before: { label: 'Suggest until', selector: { time: {} } },
-              },
-            },
-          },
-        },
-      ],
-      computeHelper: (s: { name: string }) => (s.name === 'scenes' ? 'Style C shows up to four that fit the time now' : undefined),
-    };
+  static getConfigElement() {
+    return editorFor(EDITOR);
   }
 
   static getStubConfig(_hass: unknown, entities: string[], fallback: string[]) {

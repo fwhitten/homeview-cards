@@ -106,6 +106,39 @@ export class HomeViewView extends LitElement {
     return `grid-column:${col};grid-row:${row}`;
   }
 
+  /**
+   * Fill exactly the space below the view's top edge. HA's --header-height
+   * stays set when kiosk tools hide the header, so measure instead.
+   */
+  private fit = (): void => {
+    if (window.matchMedia('(max-width: 900px)').matches) {
+      this.style.removeProperty('--hv-view-height');
+      return;
+    }
+    const top = Math.max(0, this.getBoundingClientRect().top + (document.scrollingElement?.scrollTop ?? 0));
+    const height = (window.visualViewport?.height ?? window.innerHeight) - top;
+    this.style.setProperty('--hv-view-height', `${Math.max(320, Math.floor(height))}px`);
+  };
+
+  private resizer?: ResizeObserver;
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    window.addEventListener('resize', this.fit);
+    window.visualViewport?.addEventListener('resize', this.fit);
+    // The header can appear or disappear (kiosk mode, edit mode) without a window resize.
+    this.resizer = new ResizeObserver(() => this.fit());
+    this.resizer.observe(document.body);
+    requestAnimationFrame(this.fit);
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    window.removeEventListener('resize', this.fit);
+    window.visualViewport?.removeEventListener('resize', this.fit);
+    this.resizer?.disconnect();
+  }
+
   private edit(index: number): void {
     fireEvent(this, 'll-edit-card', { path: [...this.path, 'cards', index] });
   }
@@ -115,6 +148,7 @@ export class HomeViewView extends LitElement {
   }
 
   protected updated(): void {
+    requestAnimationFrame(this.fit);
     const slots = this.renderRoot.querySelectorAll<HTMLElement>('.cell');
     slots.forEach((slot, i) => {
       const card = this.cards[i];
@@ -136,6 +170,7 @@ export class HomeViewView extends LitElement {
     const rows = this.config.rows ?? 4;
     return html`
       <div class="wall" style="background:${this.wallpaper()}"></div>
+      <div class="frame">
       ${this.config.header ? html`<div class="head"></div>` : nothing}
       <div class="grid ${editing ? 'editing' : ''}" style="grid-template-columns:repeat(${cols},minmax(0,1fr));grid-template-rows:repeat(${rows},minmax(0,1fr))">
         ${this.cards.map(
@@ -146,22 +181,26 @@ export class HomeViewView extends LitElement {
         )}
         ${editing ? html`<button class="addbtn" @click=${() => this.add()}><ha-icon icon="mdi:plus"></ha-icon>Add card</button>` : nothing}
       </div>
+      </div>
       <div class="helpers"></div>
     `;
   }
 
   static styles = css`
+    /* Layout lives on .frame: the dashboard may set display on the view element itself. */
     :host {
       position: relative;
+      display: block;
+      height: var(--hv-view-height, calc(100dvh - var(--header-height, 56px)));
+      overflow: hidden;
+    }
+    .frame {
+      box-sizing: border-box;
+      height: 100%;
       display: flex;
       flex-direction: column;
       gap: 20px;
-      box-sizing: border-box;
-      min-height: calc(100vh - var(--header-height, 56px));
-      min-height: calc(100dvh - var(--header-height, 56px));
-      height: calc(100dvh - var(--header-height, 56px));
       padding: 28px;
-      overflow: hidden;
     }
     .wall {
       position: fixed;
@@ -235,6 +274,9 @@ export class HomeViewView extends LitElement {
       :host {
         height: auto;
         overflow: visible;
+      }
+      .frame {
+        height: auto;
         padding: 16px;
       }
       .grid {

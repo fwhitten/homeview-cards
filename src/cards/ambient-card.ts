@@ -8,6 +8,7 @@ import { inEditMode } from '../core/edit-mode';
 import { defineElement, registerCard } from '../core/register';
 import type { DepthPhoto } from './clock-card';
 import type { Chip } from './chips-card';
+import { editorFor, type EditorSpec } from '../core/editor';
 
 export interface AmbientConfig extends LovelaceCardConfig {
   photos?: DepthPhoto[];
@@ -23,6 +24,37 @@ export interface AmbientConfig extends LovelaceCardConfig {
 }
 
 const ACTIVITY = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const;
+
+const EDITOR: EditorSpec = {
+  schema: (c) => [
+    { name: 'motion_entity', selector: { entity: { domain: 'binary_sensor' } } },
+    { name: 'timeout', selector: { number: { min: 10, max: 3600, mode: 'box', unit_of_measurement: 's' } } },
+    { name: 'night_entity', selector: { entity: { domain: ['input_boolean', 'binary_sensor', 'sun'] } } },
+    { name: 'show_date', selector: { boolean: {} } },
+    {
+      name: 'photos',
+      selector: {
+        object: {
+          multiple: true,
+          label_field: 'background',
+          fields: {
+            background: { label: 'Background photo', required: true, selector: { text: {} } },
+            foreground: { label: 'Cut-out foreground (transparent PNG or WebP)', selector: { text: {} } },
+            color: { label: 'Numeral colour (optional)', selector: { text: {} } },
+            position: { label: 'Numeral position from the top', selector: { number: { min: 0, max: 0.8, step: 0.01, mode: 'slider' } } },
+          },
+        },
+      },
+    },
+    ...((c.photos?.length ?? 0) > 1 ? [{ name: 'rotate_minutes', selector: { number: { min: 1, max: 1440, mode: 'box', unit_of_measurement: 'min' } } }] : []),
+    { name: 'chips', selector: { object: {} } },
+  ],
+  labels: { motion_entity: 'Presence or motion sensor', timeout: 'Show after', show_date: 'Show the date', photos: 'Depth photos', rotate_minutes: 'Change photo every', chips: 'Glance chips' },
+  helpers: {
+    motion_entity: 'The clock shows once this has been clear, and the screen untouched, for the time below. Leave empty for touch only',
+    chips: 'Same chips as the status chips card, in YAML',
+  },
+};
 
 /**
  * The full-screen depth clock with glance chips, shown when nobody is in front
@@ -180,35 +212,8 @@ export class HomeViewAmbientCard extends LitElement {
   private lastActivity = Date.now();
   private motionClearedAt = Date.now();
 
-  static getConfigForm() {
-    return {
-      schema: [
-        { name: 'motion_entity', selector: { entity: { domain: 'binary_sensor' } } },
-        { name: 'timeout', default: 120, selector: { number: { min: 10, max: 3600, unit_of_measurement: 's' } } },
-        { name: 'night_entity', selector: { entity: { domain: ['input_boolean', 'binary_sensor', 'sun'] } } },
-        { name: 'show_date', default: true, selector: { boolean: {} } },
-        {
-          name: 'photos',
-          selector: {
-            object: {
-              multiple: true,
-              label_field: 'background',
-              fields: {
-                background: { label: 'Background photo URL', required: true, selector: { text: {} } },
-                foreground: { label: 'Foreground cut-out URL', selector: { text: {} } },
-                color: { label: 'Numeral colour', selector: { text: {} } },
-                position: { label: 'Numeral position (0 top – 1 bottom)', selector: { number: { min: 0, max: 0.8, step: 0.01 } } },
-              },
-            },
-          },
-        },
-        { name: 'rotate_minutes', default: 30, selector: { number: { min: 1, max: 1440, unit_of_measurement: 'min' } } },
-      ],
-      computeHelper: (s: { name: string }) =>
-        s.name === 'motion_entity'
-          ? 'Leave empty to use touch inactivity only. Chips are set in YAML with the same options as the status chips card.'
-          : undefined,
-    };
+  static getConfigElement() {
+    return editorFor(EDITOR);
   }
 
   static getStubConfig() {

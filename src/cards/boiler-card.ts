@@ -4,18 +4,38 @@ import type { GridOptions } from '../core/types';
 import { BOILER_ENTITY_SCHEMA, MODE_STYLE, boilerEntities, boilerMode, tempOf, type BoilerEntities } from '../core/boiler';
 import { fixed } from '../core/format';
 import { defineElement, registerCard } from '../core/register';
+import { actionsSection, appearanceSection, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
 export interface BoilerCardConfig extends BaseCardConfig, BoilerEntities {}
+
+const EDITOR: EditorSpec = {
+  schema: () => [{ name: 'name', selector: { text: {} } }, ...BOILER_ENTITY_SCHEMA, appearanceSection, actionsSection(), layoutSection],
+  labels: {
+    flow_temp_entity: 'Flow temperature',
+    flow_target_entity: 'Flow target',
+    return_temp_entity: 'Return temperature',
+    flame_entity: 'Flame',
+    pump_entity: 'Pump',
+    dhw_temp_entity: 'Hot water temperature',
+    dhw_target_entity: 'Hot water target',
+    dhw_active_entity: 'Hot water active',
+    infer_hot_water: 'Assume hot water when the flame is on and no zone is calling',
+    zones: 'Heating zones',
+    outdoor_entity: 'Outdoor temperature',
+    indoor_entity: 'Indoor temperature',
+    heating_energy_entity: 'Gas used for heating',
+    hot_water_energy_entity: 'Gas used for hot water',
+  },
+  helpers: { tap_action: 'Default: opens the boiler pop-up', zones: 'A zone shows Heating while its heat-call entity is on, or its thermostat reports heating' },
+};
 
 /**
  * Boiler (design A): the mode and flow temperature, kept simple for the home
  * page. Tap opens the boiler pop-up with the flow diagram, zones and history.
  */
 export class HomeViewBoilerCard extends HomeViewCard<BoilerCardConfig> {
-  static getConfigForm() {
-    return {
-      schema: [{ name: 'name', selector: { text: {} } }, ...BOILER_ENTITY_SCHEMA, { name: 'tap_action', selector: { ui_action: {} } }],
-    };
+  static getConfigElement() {
+    return editorFor(EDITOR);
   }
 
   static getStubConfig() {

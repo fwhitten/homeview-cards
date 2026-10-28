@@ -41,7 +41,12 @@ for the wallpaper and the rest of Home Assistant's UI.
 | Notifications | `custom:homeview-notification-card` | A port of [Fullscreen Notification Card](https://github.com/fwhitten/ha-fullscreen-notification-card) in the HomeView style. |
 | Wall-panel view | `type: custom:homeview-view` (view) | 6 × 4 grid, wallpaper, header, ambient clock and notifications in one view. |
 
-Every card has a visual editor and shows up in the card picker.
+Every card has a visual editor and shows up in the card picker. The editor
+only shows the options that apply to the variant you pick (for example,
+power colour thresholds disappear when the energy card shows kWh), and every
+card has an **Interactions** section (tap, hold, double tap, including
+*navigate*) and a **Position on the HomeView view** section (column, row,
+width and height).
 
 ## Install
 
@@ -339,21 +344,51 @@ scenes:
 
 ### Status chips
 
+Chips take Home Assistant's own badge options, so badge YAML pastes straight in:
+
 ```yaml
 type: custom:homeview-chips-card
 style: full          # full (A) | compact (B) | glance (C)
 show_greeting: true
 chips:
-  - entity: binary_sensor.back_door
-    name: Back door open
-    icon: mdi:door-open
-    show_when: { state: "on" }
-    attention_when: { state: "on" }
+  - type: entity
+    entity: person.fred
+    show_name: true
+    show_state: true
+    show_entity_picture: true
+    visibility:
+      - condition: state
+        entity: person.fred
+        state: home
+  - type: entity
+    entity: sensor.charger_status
+    icon: mdi:ev-plug-type2
+    tap_action:
+      action: navigate
+      navigation_path: /dashboard-energy
+    visibility:
+      - condition: state
+        entity: sensor.charger_status
+        state_not: unavailable
   - entity: binary_sensor.smoke_kitchen
     name: Smoke · kitchen
-    show_when: { state: "on" }
+    show_name: true
+    show_state: false
     alert_when: { state: "on" }
+    visibility:
+      - condition: state
+        entity: binary_sensor.smoke_kitchen
+        state: "on"
 ```
+
+| Option | Default | |
+| --- | --- | --- |
+| `show_name` / `show_state` | `false` / `true` | Both on gives two lines: name above, state below |
+| `show_icon` | `true` | |
+| `show_entity_picture` | `false` | Person photos, media artwork |
+| `visibility` | | The same conditions as HA badges and cards: `state`, `numeric_state`, `screen`, `user`, `and`, `or`, `not` |
+| `attention_when` / `success_when` / `alert_when` | | Fills the chip amber, green, or red and pulsing |
+| `tap_action` / `hold_action` | more-info | Any HA action, including `navigate` |
 
 ### Notifications
 

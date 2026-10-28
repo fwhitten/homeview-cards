@@ -6,6 +6,7 @@ import { duration, isUnavailable, numericState, time } from '../core/format';
 import { eventFromAttributes, eventsInProgress, fetchCalendarEvents, nextEventAfter, parseEvents, type CalendarEvent } from '../core/calendar';
 import { inkFor, parseHex } from '../core/color';
 import { defineElement, registerCard } from '../core/register';
+import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
 export interface Threshold {
   value: number;
@@ -49,6 +50,78 @@ interface Reading {
 
 const BLUE = '#4C8DFF';
 
+const EDITOR: EditorSpec = {
+  schema: (c) => {
+    const kind = String(c.entity ?? '').split('.')[0];
+    const numeric = kind !== 'calendar' && kind !== 'timer';
+    return [
+      { name: 'entity', required: true, selector: { entity: {} } },
+      { name: 'design', selector: choose([['fill', 'A: fill'], ['ring', 'B: ring'], ['dots', 'C: dots']], 'list') },
+      { type: 'grid', name: '', schema: [{ name: 'name', selector: { text: {} } }, { name: 'icon', selector: { icon: {} }, context: { icon_entity: 'entity' } }] },
+      { name: 'color', selector: { text: {} } },
+      ...(numeric
+        ? [
+            { name: 'attribute', selector: { attribute: {} }, context: { filter_entity: 'entity' } },
+            { type: 'grid', name: '', schema: [{ name: 'min', selector: { number: { mode: 'box' } } }, { name: 'max', selector: { number: { mode: 'box' } } }] },
+            { name: 'secondary_entities', selector: { entity: { multiple: true } } },
+            { name: 'value_entity', selector: { entity: {} } },
+            {
+              name: 'thresholds',
+              selector: {
+                object: {
+                  multiple: true,
+                  label_field: 'value',
+                  fields: {
+                    value: { label: 'From this value', required: true, selector: { number: { mode: 'box' } } },
+                    color: { label: 'Colour', required: true, selector: { text: {} } },
+                  },
+                },
+              },
+            },
+            {
+              type: 'expandable',
+              name: '',
+              title: 'Pinning',
+              icon: 'mdi:pin-outline',
+              schema: [
+                { name: 'pin_entity', selector: { entity: {} } },
+                { name: 'pin_states', selector: { text: { multiple: true } } },
+                { name: 'pin_value', selector: { text: {} } },
+              ],
+            },
+          ]
+        : []),
+      ...(kind === 'timer' ? [{ name: 'secondary_entities', selector: { entity: { multiple: true } } }] : []),
+      ...(kind === 'calendar'
+        ? [
+            { name: 'hide_when', selector: choose([['never', 'Never hide'], ['no_events_today', 'Hide when nothing is left today'], ['no_events', 'Hide when nothing is coming up']]) },
+            { type: 'grid', name: '', schema: [{ name: 'include_all_day', selector: { boolean: {} } }, { name: 'look_ahead_days', selector: { number: { min: 1, max: 60, mode: 'box', unit_of_measurement: 'days' } } }] },
+            { name: 'cycle_interval', selector: { number: { min: 3, max: 60, mode: 'box', unit_of_measurement: 's' } } },
+          ]
+        : []),
+      appearanceSection,
+      actionsSection(),
+      layoutSection,
+    ];
+  },
+  labels: {
+    design: 'Design',
+    color: 'Colour',
+    attribute: 'Use an attribute instead of the state',
+    secondary_entities: 'Shown under the name',
+    value_entity: 'Show this instead of the value',
+    thresholds: 'Colours by value',
+    pin_entity: 'Pin while this entity…',
+    pin_states: '…is in one of these states',
+    pin_value: 'Pin to (max, min or a number)',
+    hide_when: 'Hide the card',
+    include_all_day: 'Include all-day events',
+    look_ahead_days: 'Look ahead',
+    cycle_interval: 'Switch between overlapping events every',
+  },
+  helpers: { entity: 'A number, a timer, or a calendar (shows the event in progress)', color: 'Any CSS colour, such as #4C8DFF' },
+};
+
 /**
  * Progress (designs fill, ring and dots at every size): an appliance, a
  * battery, a timer, or the event in progress on a calendar.
@@ -61,61 +134,8 @@ export class HomeViewProgressCard extends HomeViewCard<ProgressCardConfig> {
   private cycler?: number;
   private fetchedFor?: string;
 
-  static getConfigForm() {
-    return {
-      schema: [
-        { name: 'entity', required: true, selector: { entity: {} } },
-        { name: 'design', default: 'fill', selector: { select: { options: [{ value: 'fill', label: 'A: fill' }, { value: 'ring', label: 'B: ring' }, { value: 'dots', label: 'C: dots' }] } } },
-        {
-          type: 'grid',
-          name: '',
-          schema: [
-            { name: 'name', selector: { text: {} } },
-            { name: 'icon', selector: { icon: {} }, context: { icon_entity: 'entity' } },
-            { name: 'attribute', selector: { attribute: {} }, context: { filter_entity: 'entity' } },
-            { name: 'color', selector: { text: {} } },
-            { name: 'min', selector: { number: { mode: 'box' } } },
-            { name: 'max', selector: { number: { mode: 'box' } } },
-          ],
-        },
-        { name: 'secondary_entities', selector: { entity: { multiple: true } } },
-        { name: 'value_entity', selector: { entity: {} } },
-        {
-          name: 'thresholds',
-          selector: {
-            object: {
-              multiple: true,
-              label_field: 'value',
-              fields: {
-                value: { label: 'From', required: true, selector: { number: { mode: 'box' } } },
-                color: { label: 'Colour', required: true, selector: { text: {} } },
-              },
-            },
-          },
-        },
-        {
-          type: 'expandable',
-          name: '',
-          title: 'Pinning',
-          schema: [
-            { name: 'pin_entity', selector: { entity: {} } },
-            { name: 'pin_states', selector: { text: { multiple: true } } },
-            { name: 'pin_value', selector: { text: {} } },
-          ],
-        },
-        {
-          type: 'expandable',
-          name: '',
-          title: 'Calendars',
-          schema: [
-            { name: 'hide_when', default: 'never', selector: { select: { options: ['never', 'no_events_today', 'no_events'] } } },
-            { name: 'include_all_day', default: false, selector: { boolean: {} } },
-            { name: 'look_ahead_days', default: 7, selector: { number: { min: 1, max: 60 } } },
-          ],
-        },
-        { name: 'tap_action', selector: { ui_action: {} } },
-      ],
-    };
+  static getConfigElement() {
+    return editorFor(EDITOR);
   }
 
   static getStubConfig(_hass: unknown, entities: string[], fallback: string[]) {

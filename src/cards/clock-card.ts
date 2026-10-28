@@ -4,6 +4,7 @@ import { HomeViewCard, type BaseCardConfig } from '../core/base-card';
 import type { GridOptions } from '../core/types';
 import { clockDigits, longDate } from '../core/format';
 import { defineElement, registerCard } from '../core/register';
+import { actionsSection, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
 export interface DepthPhoto {
   /** The full photo. */
@@ -53,6 +54,32 @@ const sampleTint = (url: string): Promise<string | undefined> =>
     img.src = url;
   });
 
+const EDITOR: EditorSpec = {
+  schema: (c) => [
+    {
+      name: 'photos',
+      selector: {
+        object: {
+          multiple: true,
+          label_field: 'background',
+          fields: {
+            background: { label: 'Background photo', required: true, selector: { text: {} } },
+            foreground: { label: 'Cut-out foreground (transparent PNG or WebP)', selector: { text: {} } },
+            color: { label: 'Numeral colour (optional, sampled from the photo)', selector: { text: {} } },
+            position: { label: 'Numeral position from the top', selector: { number: { min: 0, max: 0.8, step: 0.01, mode: 'slider' } } },
+          },
+        },
+      },
+    },
+    ...((c.photos?.length ?? 0) > 1 ? [{ name: 'rotate_minutes', selector: { number: { min: 1, max: 1440, mode: 'box', unit_of_measurement: 'min' } } }] : []),
+    { name: 'show_date', selector: { boolean: {} } },
+    actionsSection(),
+    layoutSection,
+  ],
+  labels: { photos: 'Depth photos', rotate_minutes: 'Change photo every', show_date: 'Show the date' },
+  helpers: { photos: 'Put the files in /config/www and use /local/… addresses. Without photos a drawn landscape is shown.' },
+};
+
 /**
  * Clock (design A): HomeView's portrait clock. Rounded numerals tinted from
  * the photo sit between a background photo and its cut-out foreground, so the
@@ -64,34 +91,8 @@ export class HomeViewClockCard extends HomeViewCard<ClockCardConfig> {
   private timer?: number;
   private tinted?: string;
 
-  static getConfigForm() {
-    return {
-      schema: [
-        {
-          name: 'photos',
-          selector: {
-            object: {
-              multiple: true,
-              label_field: 'background',
-              fields: {
-                background: { label: 'Background photo URL', required: true, selector: { text: {} } },
-                foreground: { label: 'Foreground cut-out URL', selector: { text: {} } },
-                color: { label: 'Numeral colour', selector: { text: {} } },
-                position: { label: 'Numeral position (0 top – 1 bottom)', selector: { number: { min: 0, max: 0.8, step: 0.01 } } },
-              },
-            },
-          },
-        },
-        { name: 'rotate_minutes', default: 30, selector: { number: { min: 1, max: 1440, unit_of_measurement: 'min' } } },
-        { name: 'show_date', default: false, selector: { boolean: {} } },
-        { name: 'appearance', selector: { select: { options: ['auto', 'light', 'dark', 'night'] } } },
-        { name: 'tap_action', selector: { ui_action: {} } },
-      ],
-      computeHelper: (s: { name: string }) =>
-        s.name === 'photos'
-          ? 'Use pairs: the full photo, and the same photo with only the subject kept on a transparent background. Put them in /config/www and use /local/… URLs.'
-          : undefined,
-    };
+  static getConfigElement() {
+    return editorFor(EDITOR);
   }
 
   static getStubConfig() {

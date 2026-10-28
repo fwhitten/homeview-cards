@@ -47,3 +47,15 @@ export const extent = (vals: number[], pad = 0): [number, number] => {
   const p = (hi - lo) * pad;
   return [lo - p, hi + p];
 };
+
+/** Centred moving average, so step-like sensor history reads as a smooth trend. */
+export const easeSeries = (vals: number[], radius = 2): number[] =>
+  vals.map((_, i) => {
+    let sum = 0;
+    let n = 0;
+    for (let k = Math.max(0, i - radius); k <= Math.min(vals.length - 1, i + radius); k++) {
+      sum += vals[k];
+      n++;
+    }
+    return sum / n;
+  });

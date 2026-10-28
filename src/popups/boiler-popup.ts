@@ -191,25 +191,27 @@ export class HomeViewBoilerPopup extends PopupContent {
         <h3 class="sec">Last ${this.hours} hours</h3>
         <div class="seg">${[6, 12, 24].map((h) => html`<button aria-pressed=${this.hours === h} @click=${() => (this.hours = h)}>${h}h</button>`)}</div>
       </div>
-      <div class="legend">
-        <span><i style="background:#FF8A3D"></i>Flow</span><span><i style="background:#4FB3FF"></i>Return</span>
-        ${b.flow_target_entity ? html`<span><i class="dash"></i>Target</span>` : nothing}
-        ${calls.length ? html`<span><i class="call"></i>Heat call</span>` : nothing}
-      </div>
-      ${svg`<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Flow and return temperature history">
-        ${calls.map(([a, c]) => svg`<rect x=${x(a)} y="0" width=${Math.max(1, x(c) - x(a))} height=${H} fill="rgba(255,138,61,.12)"></rect>`)}
-        ${b.flow_target_entity ? svg`<path d=${step(tgt)} fill="none" stroke="var(--_ink3)" stroke-width="1.6" stroke-dasharray="6 6" vector-effect="non-scaling-stroke"></path>` : nothing}
-        <path d=${step(ret)} fill="none" stroke="#4FB3FF" stroke-width="2.5" vector-effect="non-scaling-stroke"></path>
-        <path d=${step(flow)} fill="none" stroke="#FF8A3D" stroke-width="2.5" vector-effect="non-scaling-stroke"></path>
-      </svg>`}
-      <div class="lanes">
+      <div class="hgrid">
+        <div class="legend">
+          <span><i style="background:#FF8A3D"></i>Flow</span>
+          <span><i style="background:#4FB3FF"></i>Return</span>
+          ${b.flow_target_entity ? html`<span><i class="dash"></i>Target</span>` : nothing}
+          ${calls.length ? html`<span><i class="call"></i>Heat call</span>` : nothing}
+        </div>
+        ${svg`<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Flow and return temperature history">
+          ${calls.map(([a, c]) => svg`<rect x=${x(a)} y="0" width=${Math.max(1, x(c) - x(a))} height=${H} fill="rgba(255,138,61,.12)"></rect>`)}
+          ${b.flow_target_entity ? svg`<path d=${step(tgt)} fill="none" stroke="var(--_ink3)" stroke-width="1.6" stroke-dasharray="6 6" vector-effect="non-scaling-stroke"></path>` : nothing}
+          <path d=${step(ret)} fill="none" stroke="#4FB3FF" stroke-width="2.5" vector-effect="non-scaling-stroke"></path>
+          <path d=${step(flow)} fill="none" stroke="#FF8A3D" stroke-width="2.5" vector-effect="non-scaling-stroke"></path>
+        </svg>`}
         ${lanes.map(
-          (l) => html`<div class="lane"><span class="lname">${l.name}</span><div class="ltrack">${l.spans.map(
+          (l) => html`<span class="lname">${l.name}</span><div class="ltrack">${l.spans.map(
             ([a, c]) => html`<i style="left:${(x(a) / W) * 100}%;width:${Math.max(0.3, ((x(c) - x(a)) / W) * 100)}%;background:${l.color}"></i>`,
-          )}</div></div>`,
+          )}</div>`,
         )}
+        <span></span>
+        <div class="ticks">${ticks.map((t, i) => html`<span>${i === 4 ? 'Now' : time(this.hass, new Date(t))}</span>`)}</div>
       </div>
-      <div class="ticks">${ticks.map((t, i) => html`<span>${i === 4 ? 'Now' : time(this.hass, new Date(t))}</span>`)}</div>
     </div>`;
   }
 
@@ -348,10 +350,20 @@ export class HomeViewBoilerPopup extends PopupContent {
       .hhead .sec {
         margin: 0;
       }
+      .hgrid {
+        display: grid;
+        grid-template-columns: 120px minmax(0, 1fr);
+        column-gap: 14px;
+        row-gap: 8px;
+        align-items: center;
+        margin-top: 12px;
+      }
       .legend {
+        align-self: start;
         display: flex;
-        gap: 18px;
-        margin: 10px 0;
+        flex-direction: column;
+        gap: 10px;
+        padding-top: 4px;
         font-size: 15px;
         font-weight: 600;
         color: var(--_ink2);
@@ -379,18 +391,6 @@ export class HomeViewBoilerPopup extends PopupContent {
         height: 200px;
         display: block;
       }
-      .lanes {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        margin-top: 10px;
-      }
-      .lane {
-        display: grid;
-        grid-template-columns: 120px minmax(0, 1fr);
-        align-items: center;
-        gap: 10px;
-      }
       .lname {
         font-size: 15px;
         font-weight: 600;
@@ -414,7 +414,7 @@ export class HomeViewBoilerPopup extends PopupContent {
       .ticks {
         display: flex;
         justify-content: space-between;
-        margin: 8px 0 0 130px;
+        margin-top: 2px;
         font-size: 15px;
         font-weight: 600;
         color: var(--_ink3);

@@ -4,6 +4,7 @@ import { HomeViewCard, type BaseCardConfig } from '../core/base-card';
 import type { GridOptions } from '../core/types';
 import { num, time } from '../core/format';
 import { defineElement, registerCard } from '../core/register';
+import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
 export interface WeatherCardConfig extends BaseCardConfig {
   entity: string;
@@ -67,6 +68,35 @@ const sky = (condition: string, night: boolean): string => {
   return 'linear-gradient(180deg,#2f78d0 0%,#5ea0e6 65%,#8fc1ef 100%)';
 };
 
+const EDITOR: EditorSpec = {
+  schema: (c) => [
+    { name: 'entity', required: true, selector: { entity: { domain: 'weather' } } },
+    { name: 'name', selector: { text: {} } },
+    { name: 'forecast', selector: choose([['auto', 'Auto: next hour when rain is due, otherwise hourly'], ['next_hour', 'Always the next hour'], ['hourly', 'Always hourly']], 'list') },
+    ...(c.forecast !== 'hourly'
+      ? [
+          {
+            type: 'expandable',
+            name: '',
+            title: 'Minute-by-minute rain (optional)',
+            icon: 'mdi:weather-pouring',
+            schema: [
+              { name: 'rain_entity', selector: { entity: {} } },
+              ...(c.rain_entity ? [{ name: 'rain_attribute', selector: { attribute: {} }, context: { filter_entity: 'rain_entity' } }] : []),
+              ...((c.forecast ?? 'auto') === 'auto' ? [{ name: 'rain_threshold', selector: { number: { min: 0, max: 100, mode: 'slider', unit_of_measurement: '%' } } }] : []),
+            ],
+          },
+        ]
+      : []),
+    { name: 'show_animation', selector: { boolean: {} } },
+    appearanceSection,
+    actionsSection(),
+    layoutSection,
+  ],
+  labels: { entity: 'Weather', forecast: 'Forecast panel', rain_entity: 'Rain source', rain_attribute: 'Attribute with the minute list', rain_threshold: 'Rain chance that counts as rain due', show_animation: 'Animated sky' },
+  helpers: { rain_entity: 'An entity with minute-by-minute precipitation, such as from Pirate Weather. Without it the next-hour view uses the hourly forecast.' },
+};
+
 /**
  * Weather (design A): an animated sky, conditions, temperature and high/low
  * top left, and a forecast panel showing the next hour or the hourly outlook.
@@ -77,41 +107,8 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
   private unsubs: Array<Promise<() => Promise<void>>> = [];
   private subscribedTo?: string;
 
-  static getConfigForm() {
-    return {
-      schema: [
-        { name: 'entity', required: true, selector: { entity: { domain: 'weather' } } },
-        { name: 'name', selector: { text: {} } },
-        {
-          name: 'forecast',
-          default: 'auto',
-          selector: {
-            select: {
-              mode: 'list',
-              options: [
-                { value: 'auto', label: 'Auto: next hour when rain is due, otherwise hourly' },
-                { value: 'next_hour', label: 'Next hour' },
-                { value: 'hourly', label: 'Hourly' },
-              ],
-            },
-          },
-        },
-        {
-          type: 'expandable',
-          name: '',
-          title: 'Rain source (optional)',
-          schema: [
-            { name: 'rain_entity', selector: { entity: {} } },
-            { name: 'rain_attribute', selector: { text: {} } },
-            { name: 'rain_threshold', default: 50, selector: { number: { min: 0, max: 100, unit_of_measurement: '%' } } },
-          ],
-        },
-        { name: 'show_animation', default: true, selector: { boolean: {} } },
-        { name: 'appearance', selector: { select: { options: ['auto', 'light', 'dark', 'night'] } } },
-      ],
-      computeHelper: (s: { name: string }) =>
-        s.name === 'rain_entity' ? 'An entity with minute-by-minute precipitation in an attribute' : undefined,
-    };
+  static getConfigElement() {
+    return editorFor(EDITOR);
   }
 
   static getStubConfig(_hass: unknown, entities: string[], fallback: string[]) {

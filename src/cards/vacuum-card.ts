@@ -6,6 +6,7 @@ import { areaName } from '../core/areas';
 import { numericState } from '../core/format';
 import { defineElement, registerCard } from '../core/register';
 import { haptic } from '../core/events';
+import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
 export interface VacuumCardConfig extends BaseCardConfig {
   entity: string;
@@ -30,6 +31,21 @@ const LABEL: Record<string, string> = {
   error: 'Error',
 };
 
+const EDITOR: EditorSpec = {
+  schema: (c) => [
+    { name: 'entity', required: true, selector: { entity: { domain: 'vacuum' } } },
+    { name: 'name', selector: { text: {} } },
+    { name: 'style', selector: choose([['status', 'A: state and quick actions'], ['areas', 'B: clean by area and set suction']], 'list') },
+    { name: 'battery_entity', selector: { entity: { domain: 'sensor', device_class: 'battery' } } },
+    ...(c.style === 'areas' ? [{ name: 'areas', selector: { area: { multiple: true } } }] : []),
+    appearanceSection,
+    actionsSection(),
+    layoutSection,
+  ],
+  labels: { entity: 'Vacuum', battery_entity: 'Battery sensor', areas: 'Areas to offer' },
+  helpers: { areas: 'Areas mapped to the vacuum in its entity settings (Map vacuum segments to areas)', tap_action: 'Default: more-info' },
+};
+
 /**
  * Robot vacuum, built on the standard vacuum entity: state, start / pause /
  * stop, return to dock, locate, suction, and cleaning by Home Assistant area.
@@ -37,21 +53,8 @@ const LABEL: Record<string, string> = {
 export class HomeViewVacuumCard extends HomeViewCard<VacuumCardConfig> {
   @state() private picked: string[] = [];
 
-  static getConfigForm() {
-    return {
-      schema: [
-        { name: 'entity', required: true, selector: { entity: { domain: 'vacuum' } } },
-        { name: 'name', selector: { text: {} } },
-        { name: 'style', default: 'status', selector: { select: { options: [{ value: 'status', label: 'A: state and quick actions' }, { value: 'areas', label: 'B: clean by area, set suction' }] } } },
-        { name: 'battery_entity', selector: { entity: { domain: 'sensor', device_class: 'battery' } } },
-        { name: 'areas', selector: { area: { multiple: true } } },
-        { name: 'tap_action', selector: { ui_action: {} } },
-      ],
-      computeHelper: (s: { name: string }) =>
-        s.name === 'areas'
-          ? 'Areas you have mapped to the vacuum (entity settings → Map vacuum segments to areas)'
-          : undefined,
-    };
+  static getConfigElement() {
+    return editorFor(EDITOR);
   }
 
   static getStubConfig(_hass: unknown, entities: string[], fallback: string[]) {

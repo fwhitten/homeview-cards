@@ -6,6 +6,7 @@ import type { GridOptions, HassEntity } from '../core/types';
 import { isUnavailable } from '../core/format';
 import { defineElement, registerCard } from '../core/register';
 import { fireEvent, haptic } from '../core/events';
+import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
 export interface MediaCardConfig extends BaseCardConfig {
   entity: string;
@@ -38,8 +39,40 @@ const mmss = (s: number): string => {
   return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
 };
 
-/** Two colours from the artwork (top-left and bottom-right), for the background wash. */
-const sampleArtwork = (url: string): Promise<[string, string] | undefined> =>
+interface ArtworkInfo {
+  colors: [string, string];
+  /** A small JPEG copy, so the card keeps its artwork after the player drops it. */
+  dataUrl?: string;
+}
+
+interface CachedNowPlaying {
+  art?: string;
+  title?: string;
+  artist?: string;
+  colors?: [string, string];
+}
+
+const CACHE_PREFIX = 'homeview-media:';
+
+const readCache = (entity: string): CachedNowPlaying | undefined => {
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + entity);
+    return raw ? (JSON.parse(raw) as CachedNowPlaying) : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const writeCache = (entity: string, value: CachedNowPlaying): void => {
+  try {
+    localStorage.setItem(CACHE_PREFIX + entity, JSON.stringify(value));
+  } catch {
+    /* storage full or blocked: the card still works, just without the memory */
+  }
+};
+
+/** Two colours from the artwork (top-left and bottom-right) for the wash, plus a small copy to cache. */
+const sampleArtwork = (url: string): Promise<ArtworkInfo | undefined> =>
   new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -51,7 +84,16 @@ const sampleArtwork = (url: string): Promise<[string, string] | undefined> =>
         ctx.drawImage(img, 0, 0, 2, 2);
         const d = ctx.getImageData(0, 0, 2, 2).data;
         const px = (i: number) => `rgb(${d[i]},${d[i + 1]},${d[i + 2]})`;
-        resolve([px(0), px(12)]);
+        const big = document.createElement('canvas');
+        big.width = big.height = 320;
+        big.getContext('2d')!.drawImage(img, 0, 0, 320, 320);
+        let dataUrl: string | undefined;
+        try {
+          dataUrl = big.toDataURL('image/jpeg', 0.82);
+        } catch {
+          dataUrl = undefined;
+        }
+        resolve({ colors: [px(0), px(12)], dataUrl });
       } catch {
         resolve(undefined);
       }
@@ -59,6 +101,20 @@ const sampleArtwork = (url: string): Promise<[string, string] | undefined> =>
     img.onerror = () => resolve(undefined);
     img.src = url;
   });
+
+const EDITOR: EditorSpec = {
+  schema: () => [
+    { name: 'entity', required: true, selector: { entity: { domain: 'media_player' } } },
+    { name: 'name', selector: { text: {} } },
+    { name: 'layout', selector: choose([['auto', 'Auto, by tile size'], ['compact', 'A: artwork beside the controls (2×1)'], ['artwork', 'B: large artwork (2×2)']], 'list') },
+    { name: 'swipe_volume', selector: { boolean: {} } },
+    appearanceSection,
+    actionsSection(),
+    layoutSection,
+  ],
+  labels: { entity: 'Media player', layout: 'Layout', swipe_volume: 'Swipe up and down for volume' },
+  helpers: { tap_action: 'Default: more-info' },
+};
 
 /**
  * Media (layouts A and B): HomeView's now-playing look. The background is
@@ -73,29 +129,8 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
   private volBase = 0;
   private volTimer?: number;
 
-  static getConfigForm() {
-    return {
-      schema: [
-        { name: 'entity', required: true, selector: { entity: { domain: 'media_player' } } },
-        { name: 'name', selector: { text: {} } },
-        {
-          name: 'layout',
-          default: 'auto',
-          selector: {
-            select: {
-              mode: 'list',
-              options: [
-                { value: 'auto', label: 'Auto (by tile size)' },
-                { value: 'compact', label: 'A: artwork beside the controls' },
-                { value: 'artwork', label: 'B: large artwork' },
-              ],
-            },
-          },
-        },
-        { name: 'swipe_volume', default: true, selector: { boolean: {} } },
-        { name: 'tap_action', selector: { ui_action: {} } },
-      ],
-    };
+  static getConfigElement() {
+    return editorFor(EDITOR);
   }
 
   static getStubConfig(_hass: unknown, entities: string[], fallback: string[]) {
@@ -127,7 +162,17 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
     const art = this.artwork;
     if (art && art !== this.washFor) {
       this.washFor = art;
-      void sampleArtwork(art).then((w) => (this.wash = w));
+      const st = this.stateObj();
+      void sampleArtwork(art).then((info) => {
+        if (!info) return;
+        this.wash = info.colors;
+        writeCache(this.config.entity, {
+          art: info.dataUrl,
+          title: st?.attributes.media_title,
+          artist: st?.attributes.media_artist ?? st?.attributes.app_name,
+          colors: info.colors,
+        });
+      });
     }
   }
 
@@ -229,17 +274,21 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
     const layout = this.config.layout === 'auto' || !this.config.layout ? (this.size === 'l' || this.size === 't' ? 'artwork' : 'compact') : this.config.layout;
     const big = layout === 'artwork';
     const idle = ['off', 'idle', 'standby', 'on'].includes(st.state) && !st.attributes.media_title;
-    const [c1, c2] = this.wash ?? ['#d0466f', '#f0a35a'];
-    const art = this.artwork;
-    const title = (st.attributes.media_title as string) ?? (idle ? 'Nothing playing' : name);
-    const artist = (st.attributes.media_artist as string) ?? (st.attributes.app_name as string) ?? (idle ? name : '');
+    // When the player drops its artwork (paused a while, or idle), keep showing the last track.
+    const cached = !this.artwork || idle ? readCache(this.config.entity) : undefined;
+    const [c1, c2] = this.wash ?? cached?.colors ?? ['#d0466f', '#f0a35a'];
+    const art = this.artwork ?? cached?.art;
+    const title = (st.attributes.media_title as string) ?? cached?.title ?? (idle ? 'Nothing playing' : name);
+    const artist = (st.attributes.media_artist as string) ?? (st.attributes.app_name as string) ?? cached?.artist ?? (idle ? name : '');
     const pos = this.position(st);
     const vol = this.dragVolume;
 
     return html`
       <ha-card class="tile media ${big ? 'big' : 'compact'} ${this.clickable ? 'clickable' : ''}" tabindex="0" role="button" aria-label="${name}: ${title}${artist ? `, ${artist}` : ''}">
-        <div class="wash" aria-hidden="true" style="background:radial-gradient(circle at 22% 26%, ${c1} 0%, transparent 55%),radial-gradient(circle at 80% 84%, ${c2} 0%, transparent 52%),#2b1a2e"></div>
-        <div class="dim" aria-hidden="true"></div>
+        <div class="bg" aria-hidden="true">
+          <div class="wash" style="background:radial-gradient(circle at 22% 26%, ${c1} 0%, transparent 55%),radial-gradient(circle at 80% 84%, ${c2} 0%, transparent 52%),#2b1a2e"></div>
+          <div class="dim"></div>
+        </div>
         ${big
           ? html`
               <div class="topbar">
@@ -263,14 +312,15 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
               <div class="row">
                 <div class="art" style=${art ? `background-image:url('${art}')` : ''}>${art ? nothing : html`<ha-icon icon="mdi:music-note"></ha-icon>`}</div>
                 <div class="col">
-                  <div class="topbar inline">
-                    <span class="round gl app sm"><ha-icon icon="mdi:music"></ha-icon></span>
+                  <div class="head">
+                    <div class="tt">
+                      <div class="ttl">${title}</div>
+                      <div class="artist">${artist}</div>
+                    </div>
                     ${this.volumeButton(st, true)}
                   </div>
-                  <div class="ttl">${title}</div>
-                  <div class="artist">${artist}</div>
                   ${pos
-                    ? html`<div class="bar"><i style="width:${(pos.pos / pos.dur) * 100}%"></i></div><div class="times"><span>${mmss(pos.pos)}</span><span>−${mmss(pos.dur - pos.pos)}</span></div>`
+                    ? html`<div class="progress"><div class="bar"><i style="width:${(pos.pos / pos.dur) * 100}%"></i></div><div class="times"><span>${mmss(pos.pos)}</span><span>−${mmss(pos.dur - pos.pos)}</span></div></div>`
                     : nothing}
                   <div class="ctls">${idle ? html`<button class="btn gl resume" @click=${this.svc('media_play')}><ha-icon icon="mdi:play"></ha-icon>Resume</button>` : this.controls(st, false)}</div>
                 </div>
@@ -303,6 +353,15 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
         color: #fff;
         background: #2b1a2e;
         touch-action: pan-x;
+      }
+      /* Clipped here as well as by the tile: WebKit lets blurred children escape a
+         rounded overflow:hidden parent that has a backdrop filter. */
+      .bg {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        border-radius: inherit;
+        clip-path: inset(0 round var(--_radius));
       }
       .wash {
         position: absolute;
@@ -347,8 +406,38 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
       .col {
         flex: 1;
         min-width: 0;
+        min-height: 0;
         display: flex;
         flex-direction: column;
+        justify-content: space-between;
+        gap: 6px;
+      }
+      .head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .tt {
+        min-width: 0;
+      }
+      .compact .ttl {
+        margin-top: 0;
+      }
+      .compact .bar {
+        margin-top: 0;
+      }
+      .compact .ctls {
+        margin-top: 0;
+        justify-content: space-between;
+      }
+      .compact .ctl {
+        width: 44px;
+        height: 44px;
+        --mdc-icon-size: 30px;
+      }
+      .compact .ctl.main {
+        --mdc-icon-size: 38px;
       }
       .topbar {
         position: absolute;
@@ -507,6 +596,8 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
       .volume {
         position: absolute;
         inset: 0;
+        border-radius: inherit;
+        clip-path: inset(0 round var(--_radius));
         display: flex;
         flex-direction: column;
         justify-content: center;

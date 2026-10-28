@@ -4,6 +4,7 @@ import { HomeViewCard, type BaseCardConfig } from '../core/base-card';
 import type { GridOptions, HassEntity } from '../core/types';
 import { duration, isUnavailable, time } from '../core/format';
 import { defineElement, registerCard } from '../core/register';
+import { actionsSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
 export interface CameraEvent {
   /** A binary_sensor or event entity that marks a detection. */
@@ -41,6 +42,35 @@ const ensureStreamElement = (): Promise<unknown> => {
   return streamLoader;
 };
 
+const EDITOR: EditorSpec = {
+  schema: (c) => [
+    { name: 'entity', required: true, selector: { entity: { domain: 'camera' } } },
+    { name: 'name', selector: { text: {} } },
+    { name: 'view', selector: choose([['live', 'Live stream'], ['snapshot', 'Snapshot, refreshed']], 'list') },
+    ...(c.view === 'snapshot' ? [{ name: 'refresh', selector: { number: { min: 2, max: 300, mode: 'box', unit_of_measurement: 's' } } }] : []),
+    {
+      name: 'events',
+      selector: {
+        object: {
+          multiple: true,
+          label_field: 'label',
+          fields: {
+            entity: { label: 'Detection entity', required: true, selector: { entity: { domain: ['binary_sensor', 'event'] } } },
+            label: { label: 'Label', selector: { text: {} } },
+            icon: { label: 'Icon', selector: { icon: {} } },
+          },
+        },
+      },
+    },
+    ...(c.events?.length ? [{ name: 'event_window', selector: { number: { min: 1, max: 1440, mode: 'box', unit_of_measurement: 'min' } } }] : []),
+    { type: 'grid', name: '', schema: [{ name: 'show_live_badge', selector: { boolean: {} } }, { name: 'show_time', selector: { boolean: {} } }] },
+    actionsSection(),
+    layoutSection,
+  ],
+  labels: { entity: 'Camera', view: 'Feed', refresh: 'Refresh every', events: 'Detections', event_window: 'Show detections from the last', show_live_badge: 'LIVE badge', show_time: 'Clock' },
+  helpers: { tap_action: 'Default: more-info, which opens the full-screen stream', events: 'The most recent one shows in a chip on the feed' },
+};
+
 /** Camera (design A): full-bleed feed, LIVE badge, and the latest detection in a glass chip. */
 export class HomeViewCameraCard extends HomeViewCard<CameraCardConfig> {
   @state() private streamReady = !!customElements.get('ha-camera-stream');
@@ -48,39 +78,8 @@ export class HomeViewCameraCard extends HomeViewCard<CameraCardConfig> {
   @state() private clock = new Date();
   private timers: number[] = [];
 
-  static getConfigForm() {
-    return {
-      schema: [
-        { name: 'entity', required: true, selector: { entity: { domain: 'camera' } } },
-        { name: 'name', selector: { text: {} } },
-        { name: 'view', default: 'live', selector: { select: { options: ['live', 'snapshot'] } } },
-        { name: 'refresh', default: 10, selector: { number: { min: 2, max: 300, unit_of_measurement: 's' } } },
-        {
-          name: 'events',
-          selector: {
-            object: {
-              multiple: true,
-              label_field: 'label',
-              fields: {
-                entity: { label: 'Detection entity', required: true, selector: { entity: { domain: ['binary_sensor', 'event'] } } },
-                label: { label: 'Label', selector: { text: {} } },
-                icon: { label: 'Icon', selector: { icon: {} } },
-              },
-            },
-          },
-        },
-        { name: 'event_window', default: 30, selector: { number: { min: 1, max: 1440, unit_of_measurement: 'min' } } },
-        {
-          type: 'grid',
-          name: '',
-          schema: [
-            { name: 'show_live_badge', default: true, selector: { boolean: {} } },
-            { name: 'show_time', default: true, selector: { boolean: {} } },
-          ],
-        },
-        { name: 'tap_action', selector: { ui_action: {} } },
-      ],
-    };
+  static getConfigElement() {
+    return editorFor(EDITOR);
   }
 
   static getStubConfig(_hass: unknown, entities: string[], fallback: string[]) {

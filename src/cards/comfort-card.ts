@@ -7,10 +7,13 @@ import { smoothPath } from '../core/chart';
 import { areaName, sensorInArea } from '../core/areas';
 import { fixed, numericState } from '../core/format';
 import { defineElement, registerCard } from '../core/register';
+import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
 type ComfortState = 'pleasant' | 'too_warm' | 'cold' | 'dry' | 'humid';
 
 export interface ComfortCardConfig extends BaseCardConfig {
+  /** Use an area's sensors, or pick them. Inferred when left out. */
+  source?: 'area' | 'sensors';
   /** An area: its temperature and humidity sensors are found automatically. */
   area?: string;
   temperature_entity?: string;
@@ -73,6 +76,62 @@ const gauge = (t: number, h: number, tr: Range, hr: Range) => {
   return { x, y };
 };
 
+const comfortSource = (c: Record<string, any>): string => c.source ?? (c.temperature_entity || c.humidity_entity ? 'sensors' : 'area');
+
+const EDITOR: EditorSpec = {
+  schema: (c) => [
+    { name: 'source', selector: choose([['area', 'An area (sensors found automatically)'], ['sensors', 'Pick the sensors']], 'list') },
+    ...(comfortSource(c) === 'area'
+      ? [{ name: 'area', required: true, selector: { area: {} } }]
+      : [
+          { name: 'temperature_entity', required: true, selector: { entity: { domain: 'sensor', device_class: 'temperature' } } },
+          { name: 'humidity_entity', required: true, selector: { entity: { domain: 'sensor', device_class: 'humidity' } } },
+        ]),
+    { name: 'name', selector: { text: {} } },
+    {
+      type: 'grid',
+      name: '',
+      schema: [
+        { name: 'style', selector: choose([['gauge', 'A: gauge'], ['scales', 'C: two scales']]) },
+        { name: 'background', selector: choose([['filled', 'Filled in the comfort colour'], ['glass', 'Glass']]) },
+      ],
+    },
+    ...((c.style ?? 'gauge') === 'gauge' ? [{ name: 'history_hours', selector: { number: { min: 0, max: 24, mode: 'slider', unit_of_measurement: 'h' } } }] : []),
+    {
+      type: 'expandable',
+      name: '',
+      title: 'Comfort ranges',
+      icon: 'mdi:tune-variant',
+      schema: [
+        {
+          type: 'grid',
+          name: '',
+          schema: [
+            { name: 'temp_min', selector: { number: { mode: 'box', step: 0.5, unit_of_measurement: '°' } } },
+            { name: 'temp_max', selector: { number: { mode: 'box', step: 0.5, unit_of_measurement: '°' } } },
+            { name: 'humidity_min', selector: { number: { mode: 'box', unit_of_measurement: '%' } } },
+            { name: 'humidity_max', selector: { number: { mode: 'box', unit_of_measurement: '%' } } },
+          ],
+        },
+      ],
+    },
+    appearanceSection,
+    actionsSection(),
+    layoutSection,
+  ],
+  labels: {
+    source: 'Sensors',
+    temperature_entity: 'Temperature sensor',
+    humidity_entity: 'Humidity sensor',
+    history_hours: 'Trail behind the marker',
+    temp_min: 'Comfortable from',
+    temp_max: 'Comfortable up to',
+    humidity_min: 'Humidity from',
+    humidity_max: 'Humidity up to',
+  },
+  helpers: { history_hours: '0 turns the trail off. Needs sensors with long-term statistics', tap_action: 'Default: more-info' },
+};
+
 /**
  * Climate comfort (styles A and C, filled or glass): where a room sits on
  * temperature and humidity, with the state word in the comfort colour.
@@ -81,49 +140,8 @@ export class HomeViewComfortCard extends HomeViewCard<ComfortCardConfig> {
   @state() private trail: Array<{ x: number; y: number }> = [];
   private refresh?: number;
 
-  static getConfigForm() {
-    return {
-      schema: [
-        { name: 'area', selector: { area: {} } },
-        { name: 'name', selector: { text: {} } },
-        {
-          type: 'grid',
-          name: '',
-          schema: [
-            { name: 'style', default: 'gauge', selector: { select: { options: [{ value: 'gauge', label: 'A: gauge' }, { value: 'scales', label: 'C: two scales' }] } } },
-            { name: 'background', default: 'filled', selector: { select: { options: [{ value: 'filled', label: 'Filled' }, { value: 'glass', label: 'Glass' }] } } },
-          ],
-        },
-        {
-          type: 'expandable',
-          name: '',
-          title: 'Sensors (instead of an area)',
-          schema: [
-            { name: 'temperature_entity', selector: { entity: { domain: 'sensor', device_class: 'temperature' } } },
-            { name: 'humidity_entity', selector: { entity: { domain: 'sensor', device_class: 'humidity' } } },
-          ],
-        },
-        {
-          type: 'expandable',
-          name: '',
-          title: 'Comfort ranges',
-          schema: [
-            {
-              type: 'grid',
-              name: '',
-              schema: [
-                { name: 'temp_min', default: 20, selector: { number: { mode: 'box', step: 0.5 } } },
-                { name: 'temp_max', default: 24, selector: { number: { mode: 'box', step: 0.5 } } },
-                { name: 'humidity_min', default: 40, selector: { number: { mode: 'box' } } },
-                { name: 'humidity_max', default: 60, selector: { number: { mode: 'box' } } },
-              ],
-            },
-          ],
-        },
-        { name: 'history_hours', default: 3, selector: { number: { min: 0, max: 24, unit_of_measurement: 'h' } } },
-        { name: 'tap_action', selector: { ui_action: {} } },
-      ],
-    };
+  static getConfigElement() {
+    return editorFor(EDITOR);
   }
 
   static getStubConfig(hass: { areas?: Record<string, { area_id: string }> }) {
@@ -155,7 +173,7 @@ export class HomeViewComfortCard extends HomeViewCard<ComfortCardConfig> {
 
   private get sensors(): { temp?: string; hum?: string } {
     const c = this.config;
-    if (c.temperature_entity && c.humidity_entity) return { temp: c.temperature_entity, hum: c.humidity_entity };
+    if (comfortSource(c) === 'sensors') return { temp: c.temperature_entity, hum: c.humidity_entity };
     if (!this.hass || !c.area) return {};
     return { temp: c.temperature_entity ?? sensorInArea(this.hass, c.area, 'temperature'), hum: c.humidity_entity ?? sensorInArea(this.hass, c.area, 'humidity') };
   }

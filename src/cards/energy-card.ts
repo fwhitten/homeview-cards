@@ -3,7 +3,7 @@ import { state } from 'lit/decorators.js';
 import { HomeViewCard, type BaseCardConfig } from '../core/base-card';
 import type { GridOptions, HomeAssistant } from '../core/types';
 import { fetchHistory, resample, samples } from '../core/history';
-import { areaPath, linePath, mapPoints } from '../core/chart';
+import { areaPath, easeSeries, mapPoints, smoothPath } from '../core/chart';
 import {
   DEFAULT_THRESHOLDS,
   DEVICE_COLORS,
@@ -26,6 +26,7 @@ import {
 } from '../core/energy';
 import { fetchStatistics } from '../core/history';
 import { defineElement, registerCard } from '../core/register';
+import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
 export interface EnergyCardConfig extends BaseCardConfig {
   /** A: live power over a threshold-coloured sparkline. B: where it's going now. C: today's total first. */
@@ -64,6 +65,45 @@ export const devicesNow = (hass: HomeAssistant, prefs: EnergyPrefs | undefined, 
   return list;
 };
 
+const EDITOR: EditorSpec = {
+  schema: (c) => {
+    const style = c.style ?? 'threshold';
+    return [
+      { name: 'style', selector: choose([['threshold', 'A: live power over a sparkline'], ['distribution', 'B: where the power is going now'], ['total', "C: today's energy first"]], 'list') },
+      { name: 'name', selector: { text: {} } },
+      { name: 'power_entity', selector: { entity: { domain: 'sensor', device_class: 'power' } } },
+      ...(!c.power_entity ? [{ name: 'total_mode', selector: choose([['home', 'Whole home (grid, solar and battery)'], ['grid', 'Grid only']]) }] : []),
+      ...(style === 'threshold' ? [{ name: 'hours', selector: { number: { min: 1, max: 24, mode: 'slider', unit_of_measurement: 'h' } } }] : []),
+      ...(style !== 'total'
+        ? [
+            {
+              name: 'thresholds',
+              selector: {
+                object: {
+                  multiple: true,
+                  label_field: 'value',
+                  fields: {
+                    value: { label: 'From (watts)', required: true, selector: { number: { min: 0, mode: 'box', unit_of_measurement: 'W' } } },
+                    color: { label: 'Colour', required: true, selector: { text: {} } },
+                  },
+                },
+              },
+            },
+          ]
+        : []),
+      appearanceSection,
+      actionsSection(),
+      layoutSection,
+    ];
+  },
+  labels: { style: 'Style', power_entity: 'Power sensor', total_mode: 'Count', hours: 'Sparkline covers', thresholds: 'Power colours' },
+  helpers: {
+    power_entity: 'Leave empty to use the power sensors set up in the Energy dashboard',
+    thresholds: 'The line takes each colour from that power upwards. Defaults: green, amber from 1.5 kW, red from 4 kW',
+    tap_action: 'Default: opens the energy pop-up',
+  },
+};
+
 /**
  * Energy (styles A, B and C, chosen in the card settings). Reads the Energy
  * dashboard, so it needs no entities unless you want a specific power sensor.
@@ -78,45 +118,8 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
   @state() private error?: string;
   private refresh?: number;
 
-  static getConfigForm() {
-    return {
-      schema: [
-        {
-          name: 'style',
-          default: 'threshold',
-          selector: {
-            select: {
-              mode: 'list',
-              options: [
-                { value: 'threshold', label: 'A: live power over a threshold sparkline' },
-                { value: 'distribution', label: 'B: where the power is going now' },
-                { value: 'total', label: "C: today's total first" },
-              ],
-            },
-          },
-        },
-        { name: 'name', selector: { text: {} } },
-        { name: 'power_entity', selector: { entity: { domain: 'sensor', device_class: 'power' } } },
-        { name: 'total_mode', default: 'home', selector: { select: { options: [{ value: 'home', label: 'Whole home' }, { value: 'grid', label: 'Grid only' }] } } },
-        { name: 'hours', default: 3, selector: { number: { min: 1, max: 24, unit_of_measurement: 'h' } } },
-        {
-          name: 'thresholds',
-          selector: {
-            object: {
-              multiple: true,
-              label_field: 'value',
-              fields: {
-                value: { label: 'From (W)', required: true, selector: { number: { min: 0, mode: 'box' } } },
-                color: { label: 'Colour', required: true, selector: { text: {} } },
-              },
-            },
-          },
-        },
-        { name: 'tap_action', selector: { ui_action: {} } },
-      ],
-      computeHelper: (s: { name: string }) =>
-        s.name === 'power_entity' ? 'Leave empty to use the power sensors set up in the Energy dashboard' : undefined,
-    };
+  static getConfigElement() {
+    return editorFor(EDITOR);
   }
 
   static getStubConfig() {
@@ -213,7 +216,7 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
     if (this.spark.length < 2) return nothing;
     const thresholds = this.config.thresholds?.length ? this.config.thresholds : DEFAULT_THRESHOLDS;
     const max = Math.max(...this.spark, thresholds[thresholds.length - 1]?.value ?? 4000) * 1.05;
-    const line = linePath(mapPoints(this.spark, 0, width, top, height - 2, 0, max));
+    const line = smoothPath(mapPoints(easeSeries(this.spark), 0, width, top, height - 2, 0, max));
     const stops = gradientStops(thresholds, max);
     const id = `pw${this.config.style}`;
     return svg`<svg class="spark" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">

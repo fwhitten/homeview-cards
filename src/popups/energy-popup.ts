@@ -24,7 +24,7 @@ import {
   type Threshold,
 } from '../core/energy';
 import { fetchHistory, fetchStatistics, resample, samples } from '../core/history';
-import { areaPath, linePath, mapPoints } from '../core/chart';
+import { areaPath, easeSeries, mapPoints, smoothPath } from '../core/chart';
 import { time } from '../core/format';
 import { devicesNow } from '../cards/energy-card';
 import { defineElement } from '../core/register';
@@ -235,7 +235,7 @@ export class HomeViewEnergyPopup extends PopupContent {
     const W = 640;
     const H = 132;
     const max = Math.max(...this.power, 1000) * 1.08;
-    const line = linePath(mapPoints(this.power, 0, W, 0, H, 0, max));
+    const line = smoothPath(mapPoints(easeSeries(this.power), 0, W, 0, H, 0, max));
     const stops = gradientStops(this.thresholds, max);
     const step = max / 4;
     return html`<div class="chart">

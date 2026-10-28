@@ -5,6 +5,7 @@ import type { GridOptions } from '../core/types';
 import { fetchCalendarEvents, parseEvents, type CalendarEvent } from '../core/calendar';
 import { time, weekday } from '../core/format';
 import { defineElement, registerCard } from '../core/register';
+import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
 export interface AgendaCalendar {
   entity: string;
@@ -23,6 +24,25 @@ export interface AgendaCardConfig extends BaseCardConfig {
 
 const PALETTE = ['#FF8A3D', '#7D6BFF', '#4CD07D', '#FFB340', '#4C8DFF', '#BF5AF2', '#40C8C0', '#FF6FB1'];
 
+const EDITOR: EditorSpec = {
+  schema: (c) => [
+    { name: 'calendars', required: true, selector: { entity: { domain: 'calendar', multiple: true } } },
+    { name: 'style', selector: choose([['today', 'B: today, with a now line'], ['date', "C: today's date and what's left"]], 'list') },
+    ...((c.style ?? 'today') === 'today'
+      ? [
+          { name: 'name', selector: { text: {} } },
+          { type: 'grid', name: '', schema: [{ name: 'show_tomorrow', selector: { boolean: {} } }, { name: 'max_events', selector: { number: { min: 1, max: 12, mode: 'box' } } }] },
+        ]
+      : []),
+    { name: 'include_all_day', selector: { boolean: {} } },
+    appearanceSection,
+    actionsSection(),
+    layoutSection,
+  ],
+  labels: { calendars: 'Calendars', show_tomorrow: "Show tomorrow's first events", max_events: 'Events to show', include_all_day: 'Include all-day events' },
+  helpers: { calendars: 'Colours follow the order. In YAML, use {entity, color} to choose one', tap_action: 'Default: opens the calendar' },
+};
+
 /** Agenda (styles B and C): calendars merged, each in its own colour. */
 export class HomeViewAgendaCard extends HomeViewCard<AgendaCardConfig> {
   @state() private events: CalendarEvent[] = [];
@@ -30,26 +50,8 @@ export class HomeViewAgendaCard extends HomeViewCard<AgendaCardConfig> {
   private ticker?: number;
   private loadedKey?: string;
 
-  static getConfigForm() {
-    return {
-      schema: [
-        { name: 'calendars', required: true, selector: { entity: { domain: 'calendar', multiple: true } } },
-        { name: 'name', selector: { text: {} } },
-        { name: 'style', default: 'today', selector: { select: { options: [{ value: 'today', label: 'B: today with a now line' }, { value: 'date', label: "C: today's date and what's left" }] } } },
-        {
-          type: 'grid',
-          name: '',
-          schema: [
-            { name: 'include_all_day', default: true, selector: { boolean: {} } },
-            { name: 'show_tomorrow', default: true, selector: { boolean: {} } },
-          ],
-        },
-        { name: 'max_events', default: 6, selector: { number: { min: 1, max: 12 } } },
-        { name: 'tap_action', selector: { ui_action: {} } },
-      ],
-      computeHelper: (s: { name: string }) =>
-        s.name === 'calendars' ? 'Colours follow the order. In YAML, use {entity, color} to choose one.' : undefined,
-    };
+  static getConfigElement() {
+    return editorFor(EDITOR);
   }
 
   static getStubConfig(_hass: unknown, entities: string[], fallback: string[]) {

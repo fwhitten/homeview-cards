@@ -7,6 +7,7 @@ import { areaName, entitiesInArea } from '../core/areas';
 import { brightnessPct, hex, inkFor, lightColor, supportsBrightness } from '../core/color';
 import { defineElement, registerCard } from '../core/register';
 import { haptic } from '../core/events';
+import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
 export interface LightCardConfig extends BaseCardConfig {
   /** A single light. Use this or `area` / `entities`. */
@@ -15,11 +16,33 @@ export interface LightCardConfig extends BaseCardConfig {
   area?: string;
   /** An explicit group of lights. */
   entities?: string[];
+  /** Which of entity / area / entities to use. Inferred when left out. */
+  source?: 'entity' | 'area' | 'entities';
   /** Drag direction for dimming. Defaults to vertical. */
   swipe?: 'vertical' | 'horizontal' | 'off';
 }
 
 const SEND_EVERY_MS = 250;
+
+const lightSource = (c: Record<string, any>): string => c.source ?? (c.area ? 'area' : c.entities?.length ? 'entities' : 'entity');
+
+const EDITOR: EditorSpec = {
+  schema: (c) => [
+    { name: 'source', selector: choose([['entity', 'One light'], ['area', 'Every light in an area'], ['entities', 'A group of lights']], 'list') },
+    lightSource(c) === 'area'
+      ? { name: 'area', required: true, selector: { area: {} } }
+      : lightSource(c) === 'entities'
+        ? { name: 'entities', required: true, selector: { entity: { domain: 'light', multiple: true } } }
+        : { name: 'entity', required: true, selector: { entity: { domain: 'light' } } },
+    { type: 'grid', name: '', schema: [{ name: 'name', selector: { text: {} } }, { name: 'icon', selector: { icon: {} }, context: { icon_entity: 'entity' } }] },
+    { name: 'swipe', selector: choose([['vertical', 'Swipe up and down'], ['horizontal', 'Swipe left and right'], ['off', 'Off']]) },
+    appearanceSection,
+    actionsSection(),
+    layoutSection,
+  ],
+  labels: { source: 'Control', area: 'Area', entities: 'Lights', entity: 'Light', swipe: 'Swipe to dim' },
+  helpers: { tap_action: 'Default: opens the lights pop-up', area: 'Shows and controls every visible light in the area' },
+};
 
 /**
  * Light or area tile (design A): clear glass above the level, the light's own
@@ -33,31 +56,8 @@ export class HomeViewLightCard extends HomeViewCard<LightCardConfig> {
   private lastSent = 0;
   private sendTimer?: number;
 
-  static getConfigForm() {
-    return {
-      schema: [
-        { name: 'entity', selector: { entity: { domain: 'light' } } },
-        { name: 'area', selector: { area: {} } },
-        { name: 'entities', selector: { entity: { domain: 'light', multiple: true } } },
-        {
-          type: 'grid',
-          name: '',
-          schema: [
-            { name: 'name', selector: { text: {} } },
-            { name: 'icon', selector: { icon: {} }, context: { icon_entity: 'entity' } },
-          ],
-        },
-        {
-          name: 'swipe',
-          selector: { select: { mode: 'dropdown', options: ['vertical', 'horizontal', 'off'] } },
-        },
-        { name: 'appearance', selector: { select: { options: ['auto', 'light', 'dark', 'night'] } } },
-        { name: 'tap_action', selector: { ui_action: {} } },
-        { name: 'hold_action', selector: { ui_action: {} } },
-      ],
-      computeHelper: (s: { name: string }) =>
-        s.name === 'area' ? 'Shows and controls every light in the area' : undefined,
-    };
+  static getConfigElement() {
+    return editorFor(EDITOR);
   }
 
   static getStubConfig(_hass: unknown, entities: string[], fallback: string[]) {
@@ -76,9 +76,10 @@ export class HomeViewLightCard extends HomeViewCard<LightCardConfig> {
 
   private get lights(): string[] {
     const c = this.config;
-    if (c.entity) return [c.entity];
-    if (c.entities?.length) return c.entities;
-    return this.hass && c.area ? entitiesInArea(this.hass, c.area, 'light') : [];
+    const source = lightSource(c);
+    if (source === 'area') return this.hass && c.area ? entitiesInArea(this.hass, c.area, 'light') : [];
+    if (source === 'entities') return c.entities ?? [];
+    return c.entity ? [c.entity] : [];
   }
 
   protected watched(): string[] {
@@ -161,7 +162,7 @@ export class HomeViewLightCard extends HomeViewCard<LightCardConfig> {
   private get heading(): string {
     const c = this.config;
     if (c.name) return c.name;
-    if (c.area && this.hass) return areaName(this.hass, c.area) ?? c.area;
+    if (lightSource(c) === 'area' && c.area && this.hass) return areaName(this.hass, c.area) ?? c.area;
     const st = this.states[0];
     return st?.attributes.friendly_name ?? c.entity ?? 'Lights';
   }
@@ -211,7 +212,7 @@ export class HomeViewLightCard extends HomeViewCard<LightCardConfig> {
     const rgb = lightColor(firstOn);
     const fill = hex(rgb);
     const { ink, sub } = inkFor(rgb);
-    const icon = this.config.icon ?? (this.config.area || this.lights.length > 1 ? 'mdi:lightbulb-group' : 'mdi:lightbulb');
+    const icon = this.config.icon ?? (lightSource(this.config) !== 'entity' || this.lights.length > 1 ? 'mdi:lightbulb-group' : 'mdi:lightbulb');
     const unavailable = !this.states.length || this.states.every((s) => s.state === 'unavailable');
     const horizontal = this.config.swipe === 'horizontal';
     const clip = horizontal ? `inset(0 ${100 - level}% 0 0)` : `inset(${100 - level}% 0 0 0)`;

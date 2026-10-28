@@ -7,6 +7,7 @@ import { areaPath, extent, mapPoints, smoothPath } from '../core/chart';
 import { fixed, numericState, time } from '../core/format';
 import { defineElement, registerCard } from '../core/register';
 import { haptic } from '../core/events';
+import { actionsSection, appearanceSection, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
 export interface ThermostatCardConfig extends BaseCardConfig {
   entity: string;
@@ -28,6 +29,21 @@ const ACTION_STYLE: Record<string, { color: string; icon: string; verb: string }
   defrosting: { color: '#4FB3FF', icon: 'mdi:snowflake-melt', verb: 'Defrosting' },
 };
 
+const EDITOR: EditorSpec = {
+  schema: (c) => [
+    { name: 'entity', required: true, selector: { entity: { domain: 'climate' } } },
+    { name: 'name', selector: { text: {} } },
+    { name: 'show_graph', selector: { boolean: {} } },
+    ...(c.show_graph !== false ? [{ name: 'hours_to_show', selector: { number: { min: 1, max: 48, mode: 'slider', unit_of_measurement: 'h' } } }] : []),
+    { name: 'humidity_entity', selector: { entity: { domain: 'sensor', device_class: 'humidity' } } },
+    appearanceSection,
+    actionsSection(),
+    layoutSection,
+  ],
+  labels: { entity: 'Thermostat', show_graph: 'Show the history graph', hours_to_show: 'History to show', humidity_entity: 'Humidity sensor' },
+  helpers: { humidity_entity: "Optional. Defaults to the thermostat's own humidity", tap_action: 'Default: more-info' },
+};
+
 /**
  * Thermostat (design A): reading and controls on top, the last hours of actual
  * (line) and target (dashed) temperature edge to edge underneath. At 2×2 the
@@ -40,24 +56,8 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
   private commitTimer?: number;
   private refreshTimer?: number;
 
-  static getConfigForm() {
-    return {
-      schema: [
-        { name: 'entity', required: true, selector: { entity: { domain: 'climate' } } },
-        {
-          type: 'grid',
-          name: '',
-          schema: [
-            { name: 'name', selector: { text: {} } },
-            { name: 'hours_to_show', default: 12, selector: { number: { min: 1, max: 48, mode: 'box', unit_of_measurement: 'h' } } },
-          ],
-        },
-        { name: 'humidity_entity', selector: { entity: { domain: 'sensor', device_class: 'humidity' } } },
-        { name: 'show_graph', default: true, selector: { boolean: {} } },
-        { name: 'appearance', selector: { select: { options: ['auto', 'light', 'dark', 'night'] } } },
-        { name: 'tap_action', selector: { ui_action: {} } },
-      ],
-    };
+  static getConfigElement() {
+    return editorFor(EDITOR);
   }
 
   static getStubConfig(_hass: unknown, entities: string[], fallback: string[]) {
@@ -189,12 +189,22 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
     const minus = html`<button class="round step gl" aria-label="Lower target temperature" ?disabled=${!canStep} @click=${(e: Event) => this.nudge(-1, e)}><ha-icon icon="mdi:minus"></ha-icon></button>`;
     const plus = html`<button class="round step gl" aria-label="Raise target temperature" ?disabled=${!canStep} @click=${(e: Event) => this.nudge(1, e)}><ha-icon icon="mdi:plus"></ha-icon></button>`;
 
+    // The target lives in the stepper, so the status only says what the system is doing.
+    const short = off ? 'Off' : style ? style.verb.replace(/ to$/, '') : 'Idle';
+    const stepperH = html`<div class="stepper-h gl">
+      ${minus}
+      <div class="tgt"><div class="tv">${tgtText || '—'}</div><div class="tl">${this.pendingTarget != null ? 'setting' : 'target'}</div></div>
+      ${plus}
+    </div>`;
     const header = html`
       <div class="head">
         <span class="round badge ${style && !off ? '' : 'gl'}" style="background:${iconBg};color:${style && !off ? '#fff' : 'var(--_ink2)'}"><ha-icon .icon=${icon}></ha-icon></span>
         <div class="text">
           <div class="name">${name}</div>
-          <div class="sub status" style="color:${style && !off ? 'var(--_heat-ink)' : 'var(--_ink2)'}">${this.pendingTarget != null ? `Set to ${tgtText}` : status}</div>
+          <div class="sub status">
+            <span style="color:${style && !off ? 'var(--_heat-ink)' : 'var(--_ink2)'}">${short}</span>
+            ${hum != null ? html`<span class="hum"><ha-icon icon="mdi:water-percent"></ha-icon>${Math.round(hum)}%</span>` : nothing}
+          </div>
         </div>
       </div>`;
 
@@ -244,11 +254,8 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
       <ha-card class="tile clickable wide" tabindex="0" role="button" aria-label="${name}, ${heroText}, ${status}">
         ${this.graph(426, 66, 2.5)}
         <div class="pad">
-          <div class="row">${header}<div class="steps">${minus}${plus}</div></div>
-          <div class="hero-line">
-            <span class="hero">${heroText}</span>
-            ${hum != null ? html`<span class="sub hum">Humidity ${Math.round(hum)}%</span>` : nothing}
-          </div>
+          <div class="row">${header}${canStep ? stepperH : nothing}</div>
+          <div class="hero-line"><span class="hero">${heroText}</span></div>
         </div>
       </ha-card>`;
   }
@@ -289,9 +296,10 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
         min-width: 0;
       }
       .badge {
-        width: 44px;
-        height: 44px;
+        width: 40px;
+        height: 40px;
         cursor: default;
+        --mdc-icon-size: 22px;
       }
       .badge.sm {
         width: 38px;
@@ -321,13 +329,42 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
         cursor: default;
       }
       .hero-line {
+        margin-top: 8px;
+      }
+      .status {
         display: flex;
-        align-items: baseline;
+        align-items: center;
         gap: 12px;
-        margin-top: 10px;
+        font-weight: 600;
       }
       .hum {
-        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        color: var(--_ink2);
+        --mdc-icon-size: 18px;
+      }
+      .stepper-h {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        padding: 4px;
+        border-radius: 999px;
+        flex: none;
+      }
+      .stepper-h .step {
+        width: 44px;
+        height: 44px;
+        background: none;
+      }
+      .stepper-h .step::after {
+        display: none;
+      }
+      .stepper-h .tgt {
+        min-width: 58px;
+      }
+      .stepper-h .tv {
+        font-size: 22px;
       }
       .small .name {
         font-size: 19px;

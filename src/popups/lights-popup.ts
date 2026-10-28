@@ -20,10 +20,15 @@ export class HomeViewLightsPopup extends PopupContent {
   @state() private rowDrag?: { id: string; pct: number };
   private sendTimer?: number;
 
+  private get source(): string {
+    const c = this.cfg;
+    return c.source ?? (c.area ? 'area' : c.entities?.length ? 'entities' : 'entity');
+  }
+
   private get lights(): string[] {
     const c = this.cfg;
-    if (c.entities?.length) return c.entities;
-    if (c.area && this.hass) return entitiesInArea(this.hass, c.area, 'light');
+    if (this.source === 'entities') return c.entities ?? [];
+    if (this.source === 'area') return c.area && this.hass ? entitiesInArea(this.hass, c.area, 'light') : [];
     if (c.entity && this.hass) {
       // A single light still gets its area's companions, so the pop-up stays useful.
       const area = areaOf(this.hass, c.entity);
@@ -33,13 +38,14 @@ export class HomeViewLightsPopup extends PopupContent {
   }
 
   private get primary(): string[] {
-    const c = this.cfg;
-    return c.entity ? [c.entity] : this.lights;
+    return this.source === 'entity' && this.cfg.entity ? [this.cfg.entity] : this.lights;
   }
 
   private get area(): string | undefined {
     if (!this.hass) return undefined;
-    return this.cfg.area ?? (this.cfg.entity ? areaOf(this.hass, this.cfg.entity) : undefined);
+    if (this.source === 'area') return this.cfg.area;
+    const first = this.source === 'entities' ? this.cfg.entities?.[0] : this.cfg.entity;
+    return first ? areaOf(this.hass, first) : undefined;
   }
 
   private states(ids: string[]): HassEntity[] {
@@ -49,7 +55,7 @@ export class HomeViewLightsPopup extends PopupContent {
   popupTitle(): string {
     if (!this.hass) return '';
     if (this.cfg.name) return this.cfg.name;
-    if (this.cfg.entity && !this.cfg.area) return this.st(this.cfg.entity)?.attributes.friendly_name ?? '';
+    if (this.source === 'entity' && this.cfg.entity) return this.st(this.cfg.entity)?.attributes.friendly_name ?? '';
     return areaName(this.hass, this.area) ?? 'Lights';
   }
 
