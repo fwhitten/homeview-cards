@@ -54,6 +54,7 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
   @state() private target: number[] = [];
   @state() private pendingTarget?: number;
   private commitTimer?: number;
+  private releaseTimer?: number;
   private refreshTimer?: number;
 
   static getConfigElement() {
@@ -84,6 +85,17 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     window.clearInterval(this.refreshTimer);
+  }
+
+  protected willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
+    // Hold the edited target until the thermostat reports it, so the old value
+    // never flashes back in between.
+    const reported = this.stateObj()?.attributes.temperature as number | undefined;
+    if (this.pendingTarget != null && reported != null && Math.abs(reported - this.pendingTarget) < 0.01 && !this.commitTimer) {
+      this.pendingTarget = undefined;
+      window.clearTimeout(this.releaseTimer);
+    }
   }
 
   protected firstUpdated(): void {
@@ -126,9 +138,13 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
     this.pendingTarget = next;
     haptic('selection');
     window.clearTimeout(this.commitTimer);
+    window.clearTimeout(this.releaseTimer);
     this.commitTimer = window.setTimeout(async () => {
+      this.commitTimer = undefined;
       await this.call('climate', 'set_temperature', { entity_id: this.config.entity, temperature: next });
-      window.setTimeout(() => (this.pendingTarget = undefined), 1500);
+      // Normally cleared as soon as the thermostat reports the new target (see willUpdate);
+      // this only catches a device that never confirms.
+      this.releaseTimer = window.setTimeout(() => (this.pendingTarget = undefined), 10_000);
     }, 900);
   }
 
@@ -193,7 +209,7 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
     const short = off ? 'Off' : style ? style.verb.replace(/ to$/, '') : 'Idle';
     const stepperH = html`<div class="stepper-h gl">
       ${minus}
-      <div class="tgt" aria-label="Target ${tgtText}"><div class="tv ${this.pendingTarget != null ? 'pending' : ''}">${tgtText || '—'}</div></div>
+      <div class="tgt" aria-label="Target ${tgtText}"><div class="tv" style="color:${this.pendingTarget != null ? 'var(--_heat-ink)' : 'inherit'}">${tgtText || '—'}</div></div>
       ${plus}
     </div>`;
     const header = html`
@@ -218,7 +234,7 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
               <span class="huge">${heroText}</span>
               <div class="stepper gl">
                 ${plus}
-                <div class="tgt" aria-label="Target ${tgtText}"><div class="tv ${this.pendingTarget != null ? 'pending' : ''}">${tgtText || '—'}</div></div>
+                <div class="tgt" aria-label="Target ${tgtText}"><div class="tv" style="color:${this.pendingTarget != null ? 'var(--_heat-ink)' : 'inherit'}">${tgtText || '—'}</div></div>
                 ${minus}
               </div>
             </div>
@@ -415,22 +431,6 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
         font-size: 26px;
         font-weight: 600;
         line-height: 1;
-        transition: opacity 0.2s ease;
-      }
-      /* While a new target is waiting to be sent, it pulses gently instead of saying so. */
-      .tv.pending {
-        animation: pending 1s ease-in-out infinite;
-      }
-      @keyframes pending {
-        50% {
-          opacity: 0.55;
-        }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .tv.pending {
-          animation: none;
-          opacity: 0.6;
-        }
       }
       .tl,
       .legend,

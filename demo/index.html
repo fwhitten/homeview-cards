@@ -28,9 +28,10 @@
 </head>
 <body>
 <homeview-view id="view"></homeview-view>
-<div class="bar"><button id="night">Toggle night</button><button id="popup">Open lights pop-up</button><button id="notify">Fire notification</button></div>
+<div class="bar"><button id="edit">Toggle edit</button><button id="night">Toggle night</button><button id="popup">Open lights pop-up</button><button id="notify">Fire notification</button></div>
 <script type="module">
-  import '../dist/homeview-cards.js';
+  // Cache-busted so a rebuild always shows up on reload.
+  await import('../dist/homeview-cards.js?v=' + Date.now());
 
   const now = Date.now();
   const iso = (ms) => new Date(ms).toISOString();
@@ -135,6 +136,9 @@
     { type: 'custom:homeview-boiler-card', flow_temp_entity: 'sensor.flow', return_temp_entity: 'sensor.return', flame_entity: 'binary_sensor.flame', zones: [{ name: 'Radiators', climate_entity: 'climate.living' }], view_layout: { column: 3, row: 4 } },
     { type: 'custom:homeview-light-card', entity: 'light.bedroom', view_layout: { column: 4, row: 4 } },
     { type: 'custom:homeview-progress-card', entity: 'sensor.dishwasher', secondary_entities: ['sensor.dishwasher_left'], view_layout: { column: 5, row: 4, column_span: 2, row_span: 1 } },
+    { type: 'custom:homeview-scene-card', entity: 'scene.movie', color: '#7D6BFF', note: 'Lights 10%, TV on', view_layout: { screen: 2 } },
+    { type: 'custom:homeview-scene-card', entity: 'scene.good_night', color: '#5E5CE6', view_layout: { screen: 2 } },
+    { type: 'custom:homeview-vacuum-card', entity: 'vacuum.robot', battery_entity: 'sensor.robot_battery', view_layout: { screen: 2, column_span: 2 } },
   ];
 
   const helpers = { createCardElement(cfg) { const el = document.createElement(cfg.type.replace('custom:', '')); el.setConfig(cfg); return el; } };
@@ -168,7 +172,23 @@
   });
   view.hass = hass;
   view.cards = els;
-  view.lovelace = { editMode: false, config: {} };
+  // Mock of HA's lovelace object: saving rewrites each card's config, as HA would.
+  const rawConfig = { views: [{ type: 'custom:homeview-view', cards }] };
+  const saves = [];
+  const lovelace = (editMode) => ({
+    editMode, config: rawConfig, rawConfig,
+    saveConfig: async (raw) => {
+      saves.push(raw);
+      raw.views[0].cards.forEach((c, i) => { if (els[i]) els[i].config = c; });
+      rawConfig.views = raw.views;
+      view.lovelace = lovelace(view.lovelace.editMode);
+      view.requestUpdate();
+    },
+  });
+  view.path = [0];
+  view.lovelace = lovelace(false);
+  window.saves = saves;
+  view.addEventListener('ll-delete-card', (e) => { console.log('delete', e.detail); window.lastDelete = e.detail; });
   window.hass = hass; window.serviceLog = log;
 
   const refresh = () => {
@@ -177,6 +197,7 @@
     view.hass = { ...hass };
     els.forEach((e) => (e.hass = view.hass));
   };
+  document.getElementById('edit').onclick = () => (view.lovelace = lovelace(!view.lovelace.editMode));
   document.getElementById('night').onclick = () => {
     hass.states['input_boolean.night'] = st('input_boolean.night', hass.states['input_boolean.night']?.state === 'on' ? 'off' : 'on');
     view.setConfig({ ...view.config, night_entity: 'input_boolean.night', header: { greeting: true, chips: [] } });

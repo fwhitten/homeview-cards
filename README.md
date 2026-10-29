@@ -124,6 +124,7 @@ views:
           title: Washing finished
           entity: sensor.washing_machine_status
           state: complete
+    screens: 2
     cards:
       - type: custom:homeview-clock-card
         view_layout: { column: 1, row: 1, column_span: 2, row_span: 2 }
@@ -135,8 +136,20 @@ views:
 ```
 
 Cards without `view_layout` flow into the next free cells using their own
-size. The grid is `columns` × `rows` (default 6 × 4). Under 900 px wide it
-becomes a scrolling two-column list.
+size. The grid sizes itself to the screen (`columns` / `rows` default to
+`auto`, fitting ~200 px tiles): 6 × 4 on a landscape iPad Pro, 4 × 5 in
+portrait. Set numbers to fix it. Under 900 px wide it becomes a scrolling
+two-column list.
+
+**Screens.** Add `screens: 3` to the view and put cards on a screen with
+`view_layout: { screen: 2 }`. Swipe left and right between them; dots in the
+bottom border show where you are and can be tapped.
+
+**Editing.** In the dashboard's edit mode each card gets a toolbar: drag the
+card to move it, drag the corner handle to resize it, use the arrows to send
+it to another screen, or edit and delete it. The bottom border has **Card**,
+**Screen** and (when the last screen is empty) **Last screen** buttons.
+Positions are saved to each card's `view_layout`.
 
 In a sections dashboard, put `homeview-chips-card` (with `show_greeting`),
 `homeview-ambient-card` and `homeview-notification-card` on the page

@@ -169,8 +169,12 @@ export class HomeViewCameraCard extends HomeViewCard<CameraCardConfig> {
         </div>
         <div class="bar foot">
           ${event
-            ? html`<span class="event gl"><ha-icon .icon=${event.ev.icon ?? event.st.attributes.icon ?? 'mdi:motion-sensor'}></ha-icon>${event.ev.label ??
-                event.st.attributes.friendly_name}${small ? '' : ` · ${event.ago < 60_000 ? 'now' : `${duration(event.ago)} ago`}`}</span>`
+            ? html`<span class="event gl" aria-label="${event.ev.label ?? event.st.attributes.friendly_name}, ${event.ago < 60_000 ? 'just now' : `${duration(event.ago)} ago`}"><ha-icon .icon=${event.ev.icon ?? event.st.attributes.icon ?? 'mdi:motion-sensor'}></ha-icon>${small
+                ? // On a 1×1 tile the time matters most; the icon says what it was.
+                  event.ago < 60_000
+                  ? 'Now'
+                  : `${duration(event.ago)} ago`
+                : `${event.ev.label ?? event.st.attributes.friendly_name} · ${event.ago < 60_000 ? 'now' : `${duration(event.ago)} ago`}`}</span>`
             : small
               ? html`<span class="sub light">Clear · ${time(this.hass, this.clock)}</span>`
               : html`<span></span>`}

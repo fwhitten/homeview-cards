@@ -1,6 +1,6 @@
 {
   "name": "homeview-cards",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "HomeView: Apple HomeView-style cards, pop-ups, ambient clock and a wall-panel view for Home Assistant dashboards.",
   "type": "module",
   "private": true,

@@ -107,6 +107,12 @@ export abstract class HomeViewCard<C extends BaseCardConfig = BaseCardConfig> ex
 
   protected updated(changed: PropertyValues): void {
     super.updated(changed);
+    // Size once from layout too: ResizeObserver can be late (or paused in a hidden tab).
+    const box = this.getBoundingClientRect();
+    if (box.width && box.height) {
+      const size = sizeFor(box.width, box.height);
+      if (size !== this.size) this.size = size;
+    }
     this.gestures.attach(this.renderRoot.querySelector<HTMLElement>('ha-card.tile'));
   }
 
