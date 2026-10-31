@@ -18,7 +18,10 @@ import {
   niceMax,
   readTotal,
   readWatts,
+  firstWeekday,
   startOfDay,
+  startOfMonth,
+  startOfWeek,
   totalSignals,
   totalStats,
   bucketize,
@@ -28,6 +31,7 @@ import {
   type Threshold,
   type TotalMode,
 } from '../core/energy';
+import { time } from '../core/format';
 import { defineElement, registerCard } from '../core/register';
 import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 import './energy-devices-editor';
@@ -131,15 +135,24 @@ const EDITOR: EditorSpec = {
  * Energy (styles A, B and C, chosen in the card settings). Reads the Energy
  * dashboard, so it needs no entities unless you want a specific power sensor.
  * Tap opens the energy pop-up.
+ *
+ * Every style shares one layout: the label with its context underneath, the
+ * value top right on wide tiles (under the label on narrow ones), then the
+ * picture filling the rest. The tile's size decides how much it shows.
  */
 export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
   @state() private prefs?: EnergyPrefs;
   @state() private spark: Array<number | null> = [];
   @state() private today?: number;
+  /** Yesterday up to the same time of day, for the comparison. */
   @state() private yesterday?: number;
+  @state() private yesterdayFull?: number;
+  @state() private week?: number;
+  @state() private month?: number;
   @state() private hourly: number[] = [];
   @state() private error?: string;
   private refresh?: number;
+  private sparkEnd = Date.now();
   private gradientId = `hvpw${Math.random().toString(36).slice(2, 8)}`;
 
   static getConfigElement() {
@@ -196,31 +209,37 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
     }
     const hass = this.hass;
     const hours = this.config.hours ?? 3;
+    const style = this.config.style ?? 'threshold';
     const sigs = this.signals;
-    if (sigs.length && (this.config.style ?? 'threshold') === 'threshold') {
+    if (sigs.length && style === 'threshold') {
       try {
         const width = this.getBoundingClientRect().width || 420;
+        this.sparkEnd = Date.now();
         this.spark = await fetchPowerSeries(hass, sigs, hours, bucketCount(hours, this.config.points_per_hour, width));
       } catch {
         this.spark = [];
       }
     }
-    if (this.prefs) {
+    if (this.prefs && style === 'total') {
       const stats = totalStats(hass, this.prefs, this.config);
       const now = new Date();
       const day = startOfDay(now);
       const yStart = new Date(day.getTime() - 86_400_000);
       try {
-        this.today = await energyBetween(hass, stats, day, now);
-        this.yesterday = await energyBetween(hass, stats, yStart, new Date(now.getTime() - 86_400_000));
-        if (this.config.style === 'total') {
-          const buckets = Array.from({ length: 24 }, (_, h) => ({
-            start: new Date(day.getTime() + h * 3_600_000),
-            end: new Date(day.getTime() + (h + 1) * 3_600_000),
-          }));
-          const res = await fetchEnergyStats(hass, stats.map((s) => s.id), day, now, 'hour');
-          this.hourly = buckets.map((_, i) => Math.max(0, stats.reduce((n, s) => n + s.sign * bucketize(res[s.id], buckets)[i], 0)));
-        }
+        const between = (a: Date, b: Date) => energyBetween(hass, stats, a, b);
+        [this.today, this.yesterday, this.yesterdayFull, this.week, this.month] = await Promise.all([
+          between(day, now),
+          between(yStart, new Date(now.getTime() - 86_400_000)),
+          between(yStart, day),
+          between(startOfWeek(now, firstWeekday(hass)), now),
+          between(startOfMonth(now), now),
+        ]);
+        const buckets = Array.from({ length: 24 }, (_, h) => ({
+          start: new Date(day.getTime() + h * 3_600_000),
+          end: new Date(day.getTime() + (h + 1) * 3_600_000),
+        }));
+        const res = await fetchEnergyStats(hass, stats.map((s) => s.id), day, now, 'hour');
+        this.hourly = buckets.map((_, i) => Math.max(0, stats.reduce((n, s) => n + s.sign * bucketize(res[s.id], buckets)[i], 0)));
       } catch {
         this.today = undefined;
       }
@@ -231,124 +250,185 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
     return this.hass ? readTotal(this.hass, this.signals) : null;
   }
 
+  private get readings(): number[] {
+    return this.spark.filter((v): v is number => v !== null);
+  }
+
   private get peak(): number | undefined {
-    const vals = this.spark.filter((v): v is number => v !== null);
+    const vals = this.readings;
     return vals.length ? Math.max(...vals) : undefined;
   }
 
-  /**
-   * The power line fills whatever height the text leaves, scaled to its own
-   * peak (or y_max) so a quiet evening still reads as a shape, not a flat line.
-   */
-  private sparkline() {
+  private get wide(): boolean {
+    return this.size === 'w' || this.size === 'l';
+  }
+
+  // ---------------------------------------------------------------- shared parts
+
+  private power(watts: number) {
+    const p = formatPower(watts, this.hass!.locale.language);
+    return html`${p.value}<span class="u">${p.unit}</span>`;
+  }
+
+  /** Label, context lines and value, laid out for the tile's width. */
+  private head(label: string, value: unknown, context: unknown[]) {
+    const eyebrow = html`<div class="eb"><ha-icon icon="mdi:lightning-bolt"></ha-icon><span>${label}</span></div>`;
+    if (this.wide) {
+      return html`<div class="whead">
+        <div class="wl">${eyebrow}${context}</div>
+        <div class="val ${this.size === 'l' ? 'xl' : ''}">${value}</div>
+      </div>`;
+    }
+    return html`<div class="nhead">
+      ${eyebrow}
+      <div class="val ${this.size === 's' ? 'sm' : ''}">${value}</div>
+      ${context[0] ?? nothing}
+    </div>`;
+  }
+
+  private stats(items: Array<[unknown, string]>) {
+    return html`<div class="stats">${items.map(([v, label]) => html`<div class="stat"><b>${v}</b><div>${label}</div></div>`)}</div>`;
+  }
+
+  private deviceIcon(d: DeviceNow) {
+    const st = d.entity ? this.hass!.states[d.entity] : undefined;
+    return html`<span class="devi" style="background:${d.color}" role="img" aria-label=${d.name}>${st
+      ? html`<ha-state-icon .hass=${this.hass} .stateObj=${st}></ha-state-icon>`
+      : html`<ha-icon icon="mdi:power-plug"></ha-icon>`}</span>`;
+  }
+
+  /** The device bar: segments cut apart by gaps, fully round only at its two ends. */
+  private bar(devices: DeviceNow[], total: number) {
+    return html`<div class="bar">${devices.map((d) => html`<div style="flex:${d.watts / total} 1 0;background:${d.color}"></div>`)}</div>`;
+  }
+
+  // ---------------------------------------------------------------- A: power
+
+  private sparkline(labels: boolean) {
     if (this.spark.length < 2) return html`<div class="plot"></div>`;
     const W = 1000;
-    const H = 100;
+    // With time labels the fill carries on beneath them while the line stays clear above.
+    const H = labels ? 122 : 100;
     const thresholds = this.config.thresholds?.length ? this.config.thresholds : DEFAULT_THRESHOLDS;
     const max = this.config.y_max && this.config.y_max > 0 ? this.config.y_max : niceMax(Math.max(this.peak ?? 0, 100), 2);
-    const { line, area } = gappedPaths(this.spark, 0, W, 3, H, max);
+    const { line, area: fill } = gappedPaths(this.spark, 0, W, 3, 100, max, H);
     const stops = gradientStops(thresholds, max);
     const id = this.gradientId;
-    return html`<div class="plot">${svg`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
-      <defs><linearGradient id=${id} gradientUnits="userSpaceOnUse" x1="0" y1=${H} x2="0" y2="0">
-        ${stops.map((s) => svg`<stop offset=${s.offset} stop-color=${s.color}></stop>`)}
-      </linearGradient></defs>
-      <path d=${area} fill="url(#${id})" fill-opacity=".22"></path>
-      <path d=${line} fill="none" stroke="url(#${id})" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>
-    </svg>`}</div>`;
+    const hours = this.config.hours ?? 3;
+    const marks = this.size === 'l' ? [0, 1 / 3, 2 / 3] : [0];
+    return html`<div class="plot">
+      ${svg`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <defs><linearGradient id=${id} gradientUnits="userSpaceOnUse" x1="0" y1="100" x2="0" y2="0">
+          ${stops.map((s) => svg`<stop offset=${s.offset} stop-color=${s.color}></stop>`)}
+        </linearGradient></defs>
+        <path d=${fill} fill="url(#${id})" fill-opacity=".22"></path>
+        <path d=${line} fill="none" stroke="url(#${id})" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>
+      </svg>`}
+      ${labels
+        ? html`<div class="tlab">${marks.map((f) => html`<span>${time(this.hass, new Date(this.sparkEnd - (1 - f) * hours * 3_600_000))}</span>`)}<span>Now</span></div>`
+        : nothing}
+    </div>`;
   }
 
-  private bolt() {
-    return html`<span class="round bolt"><ha-icon icon="mdi:lightning-bolt"></ha-icon></span>`;
+  private renderPower(watts: number | null, name: string) {
+    const lang = this.hass!.locale.language;
+    const peak = this.peak;
+    const vals = this.readings;
+    const peakText = peak != null ? html`<div class="ctx">Peak ${formatPower(peak, lang).value} ${formatPower(peak).unit}</div>` : nothing;
+    const roomy = this.size === 't' || this.size === 'l';
+    let extra: unknown = nothing;
+    if (roomy && vals.length) {
+      const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+      const items: Array<[unknown, string]> = [
+        [this.power(avg), 'Average'],
+        [this.power(Math.min(...vals)), 'Lowest'],
+      ];
+      if (this.size === 'l' && peak != null) {
+        const i = this.spark.indexOf(peak);
+        const hours = this.config.hours ?? 3;
+        items.push([time(this.hass, new Date(this.sparkEnd - (1 - i / Math.max(1, this.spark.length - 1)) * hours * 3_600_000)), 'Peak at']);
+      }
+      extra = this.stats(items);
+    }
+    return html`
+      ${this.head(name, watts != null ? this.power(watts) : '—', [peakText, html`<div class="meta">Last ${this.config.hours ?? 3} h</div>`])}
+      ${extra}
+      ${this.sparkline(roomy)}
+    `;
   }
 
-  private deviceInline(d: DeviceNow) {
-    const st = d.entity ? this.hass!.states[d.entity] : undefined;
-    return html`<span class="dev"><span class="devi" style="background:${d.color}" role="img" aria-label=${d.name}>${st
-        ? html`<ha-state-icon .hass=${this.hass} .stateObj=${st}></ha-state-icon>`
-        : html`<ha-icon icon="mdi:power-plug"></ha-icon>`}</span>${formatPower(d.watts, this.hass!.locale.language).value}&nbsp;${formatPower(d.watts).unit}</span>`;
+  // ---------------------------------------------------------------- B: devices
+
+  private renderDevices(watts: number | null, name: string) {
+    const lang = this.hass!.locale.language;
+    const all = devicesNow(this.hass!, this.prefs, watts, this.config);
+    const total = all.reduce((n, d) => n + d.watts, 0) || 1;
+    const named = all.filter((d) => d.name !== 'Other');
+    const other = all.find((d) => d.name === 'Other');
+    const top = named[0];
+    const share = top ? html`<div class="ctx">${Math.round((top.watts / total) * 100)}% ${top.name}</div>` : nothing;
+    const amount = (d: DeviceNow) => html`${formatPower(d.watts, lang).value}&nbsp;${formatPower(d.watts).unit}`;
+    const legend = (list: DeviceNow[]) => html`<div class="leg">${list.map((d) => html`<span class="li">${this.deviceIcon(d)}${amount(d)}</span>`)}</div>`;
+    const rows = (list: DeviceNow[], pct: boolean) =>
+      html`<div class="list">${list.map(
+        (d) => html`<div class="lr">${this.deviceIcon(d)}<span class="n">${d.name}</span><span>${amount(d)}</span>${pct ? html`<span class="p">${Math.round((d.watts / total) * 100)}%</span>` : nothing}</div>`,
+      )}</div>`;
+    let body: unknown;
+    if (this.size === 'w') body = legend([...named.slice(0, 3), ...(other ? [other] : [])]);
+    else if (this.size === 's') body = legend(named.slice(0, 2));
+    else body = rows(all.slice(0, this.size === 'l' ? 6 : 5), this.size === 'l');
+    return html`
+      ${this.head(name, watts != null ? this.power(watts) : '—', [this.size === 's' ? nothing : share, html`<div class="meta"><span class="live"></span>Live</div>`])}
+      <div class="foot">${all.length ? this.bar(all, total) : nothing}${body}</div>
+    `;
+  }
+
+  // ---------------------------------------------------------------- C: today
+
+  private renderToday(name: string) {
+    const lang = this.hass!.locale.language;
+    const kwh = (v: number | undefined) => html`${v != null ? formatEnergy(v, lang) : '—'}<span class="u">kWh</span>`;
+    const delta = this.today != null && this.yesterday ? ((this.today - this.yesterday) / this.yesterday) * 100 : undefined;
+    const vs =
+      delta != null
+        ? html`<div class="ctx" style="color:${delta <= 0 ? 'var(--_energy-ink)' : 'var(--hv-c-notice)'}">${delta <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(delta))}% vs yesterday</div>`
+        : nothing;
+    const monthName = new Intl.DateTimeFormat(lang, { month: 'long' }).format(new Date());
+    let extra: unknown = nothing;
+    if (this.size === 't') extra = this.stats([[kwh(this.yesterdayFull), 'Yesterday'], [kwh(this.week), 'This week']]);
+    if (this.size === 'l') extra = this.stats([[kwh(this.yesterdayFull), 'Yesterday'], [kwh(this.week), 'This week'], [kwh(this.month), monthName]]);
+    const max = Math.max(0.1, ...this.hourly);
+    const nowHour = new Date().getHours();
+    const axis = this.size === 's' ? [] : this.size === 't' ? ['00', '12', '24'] : ['00', '06', '12', '18', '24'];
+    return html`
+      ${this.head(name, kwh(this.today), [vs])}
+      ${extra}
+      <div class="hours">
+        <div class="hbars">${Array.from({ length: 24 }, (_, i) => {
+          const v = this.hourly[i] ?? 0;
+          const bg = i === nowHour ? 'var(--hv-c-energy)' : i < nowHour ? 'rgba(76,208,125,.6)' : 'var(--_track)';
+          return html`<div style="height:${i <= nowHour ? Math.max(5, (v / max) * 100) : 5}%;background:${bg}"></div>`;
+        })}</div>
+        ${axis.length ? html`<div class="axis">${axis.map((a) => html`<span>${a}</span>`)}</div>` : nothing}
+      </div>
+    `;
   }
 
   render() {
     if (!this.hass) return nothing;
-    const lang = this.hass.locale.language;
     const w = this.watts;
-    const p = w != null ? formatPower(w, lang) : { value: '—', unit: '' };
-    const name = this.config.name ?? (this.size === 'w' ? 'Home power' : 'Power');
-    const todayText = this.today != null ? `${formatEnergy(this.today, lang)} kWh` : '';
     const style = this.config.style ?? 'threshold';
-    const wide = this.size === 'w' || this.size === 'l';
-
     if (this.error && w == null) {
-      return html`<ha-card class="tile"><div class="in">${this.bolt()}<div class="sub wrap">${this.error}</div></div></ha-card>`;
+      return html`<ha-card class="tile"><div class="in"><ha-icon icon="mdi:lightning-bolt"></ha-icon><div class="sub wrap">${this.error}</div></div></ha-card>`;
     }
-
-    if (style === 'distribution') {
-      const devices = devicesNow(this.hass, this.prefs, w, this.config);
-      const total = devices.reduce((n, d) => n + d.watts, 0) || 1;
-      return html`<ha-card class="tile clickable" tabindex="0" role="button" aria-label="${name} ${p.value} ${p.unit}">
-        <div class="in">
-          <div class="${wide ? 'row' : ''}">
-            <div class="hd">${this.bolt()}<span class="name">${name}</span></div>
-            <div class="reading"><span class="value ${wide ? '' : 'sm'}">${p.value}</span><span class="unit">${p.unit}</span></div>
-          </div>
-          <div class="dist ${wide ? 'thick' : ''}">${devices.map((d) => html`<div style="flex:${d.watts / total} 1 0;background:${d.color}"></div>`)}</div>
-          <div class="devs">${devices.filter((d) => d.name !== 'Other').slice(0, wide ? 5 : 2).map((d) => this.deviceInline(d))}</div>
-        </div>
-      </ha-card>`;
-    }
-
-    if (style === 'total') {
-      const delta = this.today != null && this.yesterday ? ((this.today - this.yesterday) / this.yesterday) * 100 : undefined;
-      const max = Math.max(0.1, ...this.hourly);
-      const nowHour = new Date().getHours();
-      const left = html`<div class="stack">
-        <div class="hd">${this.bolt()}<span class="name">${this.config.name ?? 'Today'}</span></div>
-        <div>
-          <div class="reading"><span class="value">${this.today != null ? formatEnergy(this.today, lang) : '—'}</span><span class="unit">kWh</span></div>
-          ${delta != null
-            ? html`<div class="delta" style="color:${delta <= 0 ? 'var(--_energy-ink)' : 'var(--hv-c-notice)'}">${delta <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(delta))}% vs yesterday</div>`
-            : nothing}
-        </div>
-        <div class="live"><span class="pulse anim"></span>${p.value} ${p.unit} now</div>
-      </div>`;
-      return html`<ha-card class="tile clickable" tabindex="0" role="button" aria-label="Today ${todayText}">
-        <div class="in ${wide ? 'split' : ''}">
-          ${left}
-          ${wide
-            ? html`<div class="hours">
-                <div class="hbars">${Array.from({ length: 24 }, (_, i) => {
-                  const v = this.hourly[i] ?? 0;
-                  return html`<div style="height:${i <= nowHour ? Math.max(3, (v / max) * 100) : 3}%;background:${i === nowHour ? 'var(--hv-c-energy)' : i < nowHour ? 'rgba(76,208,125,.55)' : 'var(--_track)'}"></div>`;
-                })}</div>
-                <div class="axis"><span>00</span><span>12</span><span>24</span></div>
-              </div>`
-            : nothing}
-        </div>
-      </ha-card>`;
-    }
-
-    // A: a compact reading on top, so the power line gets the rest of the tile.
-    const peak = this.peak;
-    const pk = peak != null ? formatPower(peak, lang) : undefined;
-    return html`<ha-card class="tile clickable spark-tile" tabindex="0" role="button" aria-label="${name} ${p.value} ${p.unit}">
-      <div class="pad row">
-        <div class="lead">
-          ${this.bolt()}
-          <div>
-            <div class="name">${name}</div>
-            <div class="reading"><span class="value ${wide ? '' : 'sm'}">${p.value}</span><span class="unit">${p.unit}</span></div>
-          </div>
-        </div>
-        ${wide
-          ? html`<div class="right">
-              ${pk ? html`<div class="sub small strong">Peak ${pk.value} ${pk.unit}</div>` : nothing}
-              ${todayText ? html`<div class="sub small">Today ${todayText}</div>` : nothing}
-              <div class="sub small faint">Last ${this.config.hours ?? 3} h</div>
-            </div>`
-          : nothing}
-      </div>
-      ${this.sparkline()}
+    const p = w != null ? formatPower(w, this.hass.locale.language) : { value: '—', unit: '' };
+    const name =
+      this.config.name ??
+      (style === 'distribution' ? 'Using now' : style === 'total' ? (this.wide ? 'Energy today' : 'Today') : 'Power');
+    const label =
+      style === 'total' && this.today != null ? `${name} ${formatEnergy(this.today, this.hass.locale.language)} kWh` : `${name} ${p.value} ${p.unit}`;
+    return html`<ha-card class="tile clickable energy ${style}" tabindex="0" role="button" aria-label=${label}>
+      ${style === 'distribution' ? this.renderDevices(w, name) : style === 'total' ? this.renderToday(name) : this.renderPower(w, name)}
     </ha-card>`;
   }
 
@@ -363,181 +443,263 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
   static styles = [
     ...HomeViewCard.styles,
     css`
-      ha-card.spark-tile {
+      ha-card.energy {
         display: flex;
         flex-direction: column;
       }
-      .pad {
-        position: relative;
-        flex: none;
-        padding: 18px 20px 0;
-      }
-      .lead {
+      .eb {
         display: flex;
-        align-items: flex-start;
-        gap: 12px;
+        align-items: center;
+        gap: 7px;
         min-width: 0;
-      }
-      .lead .name {
         font-size: 17px;
         font-weight: 600;
-        color: var(--_ink2);
-        line-height: 1.1;
+        white-space: nowrap;
+        --mdc-icon-size: 18px;
       }
-      .lead .reading {
-        margin-top: 2px;
+      .eb span {
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
-      .lead .bolt {
-        margin-top: 4px;
-      }
-      .plot {
-        flex: 1;
-        min-height: 40px;
-        margin-top: 6px;
-        pointer-events: none;
-      }
-      .plot svg {
-        display: block;
-        width: 100%;
-        height: 100%;
-      }
-      .row {
+      .whead {
+        flex: none;
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
         gap: 12px;
+        padding: 18px 20px 0;
       }
-      .right {
-        text-align: right;
+      .wl {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        min-width: 0;
       }
-      .hd {
+      .nhead {
+        flex: none;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 18px 20px 0;
+      }
+      .val {
+        font-size: 52px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        line-height: 1;
+        white-space: nowrap;
+      }
+      .val.xl {
+        font-size: 64px;
+      }
+      .val.sm {
+        font-size: 40px;
+      }
+      .u {
+        font-size: 0.38em;
+        font-weight: 600;
+        letter-spacing: 0;
+        color: var(--_ink2);
+        margin-left: 4px;
+      }
+      .ctx {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--_ink2);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .meta {
         display: flex;
         align-items: center;
-        gap: 10px;
-      }
-      .hd .name {
-        font-size: 19px;
-      }
-      .bolt {
-        width: 36px;
-        height: 36px;
-        background: var(--hv-c-energy);
-        color: #06240f;
-        cursor: default;
-        --mdc-icon-size: 20px;
-      }
-      .reading {
-        display: flex;
-        align-items: baseline;
-        gap: 4px;
-      }
-      .reading.top {
-        margin-top: 10px;
-      }
-      .value {
-        font-size: 52px;
-      }
-      .spark-tile .value {
-        font-size: 50px;
-        line-height: 1;
-      }
-      .value.sm {
-        font-size: 46px;
-      }
-      .spark-tile .value.sm {
-        font-size: 36px;
-      }
-      .small {
-        font-size: 16px;
-      }
-      .strong {
+        gap: 6px;
+        font-size: 14px;
         font-weight: 600;
-      }
-      .faint {
         color: var(--_ink3);
+        white-space: nowrap;
       }
-      .wrap {
-        white-space: normal;
+      .live {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--hv-c-energy);
       }
-      .dist {
+      .stats {
+        flex: none;
         display: flex;
+        gap: 22px;
+        padding: 14px 20px 0;
+      }
+      .stat b {
+        font-size: 22px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .stat .u {
+        font-size: 14px;
+        margin-left: 3px;
+      }
+      .stat div {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--_ink3);
+        margin-top: 2px;
+      }
+      .plot {
+        position: relative;
+        flex: 1;
+        min-height: 40px;
+        margin-top: 10px;
+        pointer-events: none;
+      }
+      .plot svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+      .tlab {
+        position: absolute;
+        left: 18px;
+        right: 18px;
+        bottom: 14px;
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--_ink2);
+      }
+      .foot {
+        margin-top: auto;
+        padding: 12px 20px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      :host([size='l']) .foot {
+        gap: 20px;
+        padding-bottom: 22px;
+      }
+      .bar {
+        display: flex;
+        gap: 4px;
         height: 14px;
         border-radius: 7px;
         overflow: hidden;
-        gap: 2px;
-        background: var(--_track);
       }
-      .dist.thick {
+      .bar div {
+        min-width: 4px;
+        border-radius: 3px;
+      }
+      :host([size='s']) .bar {
+        height: 10px;
+        gap: 3px;
+        border-radius: 5px;
+      }
+      :host([size='l']) .bar {
         height: 18px;
+        gap: 5px;
         border-radius: 9px;
-      }
-      .devs {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px 18px;
-      }
-      .dev {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 17px;
-        font-weight: 600;
-        white-space: nowrap;
       }
       .devi {
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        flex: none;
         width: 24px;
         height: 24px;
         border-radius: 999px;
-        color: #14161c;
+        color: #17151f;
         --mdc-icon-size: 15px;
-        flex: none;
       }
-      .split {
-        flex-direction: row;
-        gap: 22px;
+      .leg {
+        display: flex;
+        gap: 16px;
+        overflow: hidden;
       }
-      .stack {
+      :host([size='s']) .leg {
+        gap: 10px;
+      }
+      .li {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 16px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      :host([size='s']) .li {
+        font-size: 14px;
+        gap: 4px;
+      }
+      :host([size='s']) .devi {
+        width: 20px;
+        height: 20px;
+        --mdc-icon-size: 12px;
+      }
+      .list {
         display: flex;
         flex-direction: column;
-        justify-content: space-between;
-        flex: none;
-        height: 100%;
+        gap: 10px;
       }
-      .delta {
-        font-size: 16px;
-        font-weight: 600;
-      }
-      .live {
+      .lr {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
         font-size: 16px;
         font-weight: 600;
+        white-space: nowrap;
+      }
+      :host([size='l']) .lr {
+        font-size: 17px;
+      }
+      :host([size='t']) .lr {
+        gap: 8px;
+        font-size: 15px;
+      }
+      :host([size='t']) .devi {
+        width: 22px;
+        height: 22px;
+        --mdc-icon-size: 13px;
+      }
+      .lr .n {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
         color: var(--_ink2);
       }
-      .pulse {
-        width: 9px;
-        height: 9px;
-        border-radius: 50%;
-        background: var(--hv-c-energy);
-        animation: pulse 1.6s ease-in-out infinite;
+      .lr .p {
+        width: 38px;
+        text-align: right;
+        font-size: 14px;
+        color: var(--_ink3);
       }
       .hours {
         flex: 1;
-        min-width: 0;
+        min-height: 0;
         display: flex;
         flex-direction: column;
-        gap: 6px;
-        padding-top: 6px;
+        gap: 4px;
+        padding: 12px 20px 14px;
+      }
+      :host([size='s']) .hours {
+        padding: 10px 18px 18px;
+      }
+      :host([size='l']) .hours {
+        padding: 18px 20px 16px;
       }
       .hbars {
         flex: 1;
+        min-height: 0;
         display: flex;
         align-items: flex-end;
         gap: 3px;
+      }
+      :host([size='s']) .hbars,
+      :host([size='t']) .hbars {
+        gap: 2px;
       }
       .hbars div {
         flex: 1;
@@ -546,14 +708,12 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
       .axis {
         display: flex;
         justify-content: space-between;
-        font-size: 15px;
+        font-size: 13px;
         font-weight: 600;
-        color: var(--_ink2);
+        color: var(--_ink3);
       }
-      @keyframes pulse {
-        50% {
-          opacity: 0.35;
-        }
+      .wrap {
+        white-space: normal;
       }
     `,
   ];

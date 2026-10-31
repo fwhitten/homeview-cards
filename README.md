@@ -288,7 +288,15 @@ uses the same data and bucketing as
 recorder history up to 6 hours (five-minute statistics beyond), averaged per
 point with the last reading carried through quiet spells. The editor's
 **Devices** section lists every Energy dashboard device to rename, recolour,
-hide or exclude. The pop-up shows
+hide or exclude. Devices take HomeView's Mineral palette in order (twelve soft
+colours of equal lightness, neighbours always contrasting); pick any colour
+there to override one.
+
+All three styles share one layout: the label with its context underneath, the
+value top right on wide tiles (under the label on narrow ones), and the graph,
+device bar or hourly bars filling the rest. Taller and larger tiles add
+detail: average and lowest power, the device list, or yesterday, this week
+and this month. The pop-up shows
 power now, today / this week / this month, and a per-device breakdown by day,
 week, month or year.
 

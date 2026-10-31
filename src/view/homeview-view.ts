@@ -130,6 +130,8 @@ export class HomeViewView extends LitElement {
   @property({ attribute: false }) hass?: HomeAssistant;
   @property({ attribute: false }) lovelace?: Lovelace;
   @property({ type: Boolean }) narrow = false;
+  /** This view's position in the dashboard; Home Assistant sets it on every view layout. */
+  @property({ type: Number }) index?: number;
   @property({ attribute: false }) path: Array<string | number> = [];
   @property({ attribute: false }) cards: HuiCard[] = [];
   @property({ attribute: false }) badges: HTMLElement[] = [];
@@ -377,8 +379,18 @@ export class HomeViewView extends LitElement {
   // ---------------------------------------------------------------- editing
 
   private get viewIndex(): number {
+    if (typeof this.index === 'number') return this.index;
     const nums = this.path.filter((p): p is number => typeof p === 'number');
     return nums.length ? nums[nums.length - 1] : 0;
+  }
+
+  /**
+   * A card's address in the events Home Assistant's view listens for:
+   * [view, card]. Current releases need exactly this; newer ones address
+   * cards by name but still accept it from custom views.
+   */
+  private cardPath(index: number): [number, number] {
+    return [this.viewIndex, index];
   }
 
   /** Change this view's config and save the dashboard. */
@@ -425,15 +437,16 @@ export class HomeViewView extends LitElement {
   }
 
   private edit(index: number): void {
-    fireEvent(this, 'll-edit-card', { path: [...this.path, 'cards', index] });
+    fireEvent(this, 'll-edit-card', { path: this.cardPath(index) });
   }
 
   private deleteCard(index: number): void {
-    fireEvent(this, 'll-delete-card', { path: [...this.path, 'cards', index], silent: false });
+    fireEvent(this, 'll-delete-card', { path: this.cardPath(index), silent: false });
   }
 
   private add(): void {
-    fireEvent(this, 'll-create-card', { path: [...this.path, 'cards'] });
+    // No path: Home Assistant adds the card to this view, in every release.
+    fireEvent(this, 'll-create-card');
   }
 
   private addScreen(): void {

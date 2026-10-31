@@ -215,6 +215,7 @@
     },
   });
   view.path = [0];
+  view.index = 0;
   view.lovelace = lovelace(false);
   window.saves = saves;
   view.addEventListener('ll-delete-card', (e) => { console.log('delete', e.detail); window.lastDelete = e.detail; });

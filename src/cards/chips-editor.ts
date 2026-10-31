@@ -8,23 +8,38 @@ import type { Chip } from './chips-card';
 
 type Field = Record<string, any>;
 
-const test = (label: string): Field => ({
-  name: '',
-  label,
-  selector: {
-    object: {
-      fields: {
-        entity: { label: "Entity (defaults to the chip's)", selector: { entity: {} } },
-        state: { label: 'State is', selector: { text: {} } },
-        state_not: { label: 'State is not', selector: { text: {} } },
-        above: { label: 'Above', selector: { number: { mode: 'box' } } },
-        below: { label: 'Below', selector: { number: { mode: 'box' } } },
-      },
+/**
+ * One "highlight when" test as its own section. The state fields are Home
+ * Assistant's state picker, listing the states the entity actually has.
+ */
+const test = (name: string, title: string, icon: string, entity?: string): Field => ({
+  type: 'expandable',
+  name,
+  title,
+  icon,
+  schema: [
+    { name: 'entity', selector: { entity: {} } },
+    {
+      type: 'grid',
+      name: '',
+      schema: [
+        { name: 'state', selector: { state: { entity_id: entity } } },
+        { name: 'state_not', selector: { state: { entity_id: entity } } },
+      ],
     },
-  },
+    {
+      type: 'grid',
+      name: '',
+      schema: [
+        { name: 'above', selector: { number: { mode: 'box', step: 'any' } } },
+        { name: 'below', selector: { number: { mode: 'box', step: 'any' } } },
+      ],
+    },
+  ],
 });
 
-const CHIP_SCHEMA: Field[] = [
+/** The chip's fields. State pickers follow each test's entity, or the chip's. */
+const chipSchema = (c: Chip): Field[] => [
   { name: 'entity', selector: { entity: {} } },
   { type: 'grid', name: '', schema: [{ name: 'name', selector: { text: {} } }, { name: 'icon', selector: { icon: {} } }] },
   {
@@ -54,18 +69,10 @@ const CHIP_SCHEMA: Field[] = [
     },
   },
   { name: 'color', selector: { ui_color: { default_color: 'state', include_state: true, include_none: true } } },
-  {
-    type: 'expandable',
-    name: '',
-    title: 'Highlight when…',
-    icon: 'mdi:alert-circle-outline',
-    schema: [
-      { ...test('Amber when'), name: 'attention_when' },
-      { ...test('Green when'), name: 'success_when' },
-      { ...test('Red and pulsing when'), name: 'alert_when' },
-      { name: 'badge', selector: { boolean: {} } },
-    ],
-  },
+  test('attention_when', 'Amber when…', 'mdi:alert-circle-outline', c.attention_when?.entity ?? c.entity),
+  test('success_when', 'Green when…', 'mdi:check-circle-outline', c.success_when?.entity ?? c.entity),
+  test('alert_when', 'Red and pulsing when…', 'mdi:alarm-light-outline', c.alert_when?.entity ?? c.entity),
+  { name: 'badge', selector: { boolean: {} } },
   {
     type: 'expandable',
     name: '',
@@ -81,6 +88,10 @@ const CHIP_SCHEMA: Field[] = [
 
 const LABELS: Record<string, string> = {
   entity: 'Entity',
+  state: 'State is',
+  state_not: 'State is not',
+  above: 'Above',
+  below: 'Below',
   name: 'Name',
   icon: 'Icon',
   show_name: 'Show name',
@@ -105,16 +116,23 @@ const SCREENS = [
   { value: '(orientation: landscape)', label: 'Landscape' },
 ];
 
-const CONDITION_SCHEMA: Record<string, Field[]> = {
-  state: [
+const CONDITION_SCHEMA: Record<string, (c: ConditionConfig) => Field[]> = {
+  state: (c) => [
     { name: 'entity', selector: { entity: {} } },
-    { type: 'grid', name: '', schema: [{ name: 'state', selector: { text: {} } }, { name: 'state_not', selector: { text: {} } }] },
+    {
+      type: 'grid',
+      name: '',
+      schema: [
+        { name: 'state', selector: { state: { entity_id: c.entity } } },
+        { name: 'state_not', selector: { state: { entity_id: c.entity } } },
+      ],
+    },
   ],
-  numeric_state: [
+  numeric_state: () => [
     { name: 'entity', selector: { entity: {} } },
     { type: 'grid', name: '', schema: [{ name: 'above', selector: { number: { mode: 'box', step: 'any' } } }, { name: 'below', selector: { number: { mode: 'box', step: 'any' } } }] },
   ],
-  screen: [{ name: 'media_query', selector: { select: { custom_value: true, options: SCREENS } } }],
+  screen: () => [{ name: 'media_query', selector: { select: { custom_value: true, options: SCREENS } } }],
 };
 
 const CONDITION_LABELS: Record<string, string> = {
@@ -127,6 +145,14 @@ const CONDITION_LABELS: Record<string, string> = {
   or: 'Any of',
   not: 'None of',
 };
+
+/** Drop cleared values, including tests left empty: an empty test would match every state. */
+const tidy = (obj: Record<string, any>): Record<string, any> =>
+  Object.fromEntries(
+    Object.entries(obj)
+      .map(([k, v]) => [k, v && typeof v === 'object' && !Array.isArray(v) && !k.endsWith('_action') ? tidy(v) : v] as const)
+      .filter(([, v]) => v !== undefined && v !== '' && !(Array.isArray(v) && !v.length) && !(v && typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length)),
+  );
 
 const kind = (c: ConditionConfig): string =>
   c.condition ?? (c.above !== undefined || c.below !== undefined ? 'numeric_state' : c.media_query ? 'screen' : c.users ? 'user' : 'state');
@@ -148,8 +174,7 @@ export class HomeViewChipsEditor extends LitElement {
 
   private set(i: number, chip: Chip): void {
     const next = [...this.chips];
-    const tidy = Object.fromEntries(Object.entries(chip).filter(([, v]) => v !== undefined && v !== '' && !(Array.isArray(v) && !v.length))) as Chip;
-    next[i] = tidy;
+    next[i] = tidy(chip) as Chip;
     this.emit(next);
   }
 
@@ -187,7 +212,7 @@ export class HomeViewChipsEditor extends LitElement {
       <div class="hint">${list.length ? 'Shown only while all of these are true.' : 'Always shown. Add a condition to show the chip only sometimes.'}</div>
       ${list.map((c, k) => {
         const type = kind(c);
-        const schema = CONDITION_SCHEMA[type];
+        const schema = CONDITION_SCHEMA[type] as ((c: ConditionConfig) => Field[]) | undefined;
         return html`<div class="cond">
           <div class="cond-head">
             <span>${CONDITION_LABELS[type] ?? type}</span>
@@ -196,7 +221,7 @@ export class HomeViewChipsEditor extends LitElement {
           <ha-form
             .hass=${this.hass}
             .data=${c}
-            .schema=${schema ?? [{ name: 'yaml', selector: { object: {} } }]}
+            .schema=${schema ? schema(c) : [{ name: 'yaml', selector: { object: {} } }]}
             .computeLabel=${(s: Field) => ({ entity: 'Entity', state: 'State is', state_not: 'State is not', above: 'Above', below: 'Below', media_query: 'Screen', yaml: 'Condition (YAML)' })[s.name as string] ?? s.name}
             @value-changed=${(e: CustomEvent) => {
               e.stopPropagation();
@@ -239,7 +264,7 @@ export class HomeViewChipsEditor extends LitElement {
             <ha-form
               .hass=${this.hass}
               .data=${c}
-              .schema=${CHIP_SCHEMA}
+              .schema=${chipSchema(c)}
               .computeLabel=${(s: Field) => LABELS[s.name as string] ?? s.label ?? s.name}
               @value-changed=${(e: CustomEvent) => {
                 e.stopPropagation();

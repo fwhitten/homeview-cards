@@ -408,12 +408,17 @@ export class HomeViewEnergyPopup extends PopupContent {
         font-weight: 600;
         color: var(--_ink2);
       }
+      /* Segments are cut apart by gaps the glass shows through; only the bar's outer ends are fully round. */
       .dist {
         display: flex;
         height: 18px;
         border-radius: 9px;
         overflow: hidden;
-        gap: 2px;
+        gap: 5px;
+      }
+      .dist div {
+        min-width: 4px;
+        border-radius: 3px;
       }
       .legend {
         display: flex;

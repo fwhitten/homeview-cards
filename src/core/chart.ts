@@ -95,7 +95,8 @@ export const monotonePath = (pts: Point[]): string => {
 /**
  * Line and filled area for a series with gaps (null), spread across x0..x1
  * and scaled 0..max onto bottom..top. A gap breaks the line rather than
- * diving to zero.
+ * diving to zero. `floor` closes the fill lower than the line's zero, so it
+ * can run on beneath axis labels.
  */
 export const gappedPaths = (
   vals: Array<number | null>,
@@ -104,6 +105,7 @@ export const gappedPaths = (
   top: number,
   bottom: number,
   max: number,
+  floor = bottom,
 ): { line: string; area: string } => {
   const n = Math.max(1, vals.length - 1);
   const lines: string[] = [];
@@ -114,7 +116,7 @@ export const gappedPaths = (
     if (run.length > 1) {
       const line = monotonePath(run);
       lines.push(line);
-      areas.push(`${line} L${run[run.length - 1][0].toFixed(1)} ${bottom} L${run[0][0].toFixed(1)} ${bottom} Z`);
+      areas.push(`${line} L${run[run.length - 1][0].toFixed(1)} ${floor} L${run[0][0].toFixed(1)} ${floor} Z`);
     }
     run = [];
   };

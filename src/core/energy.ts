@@ -49,9 +49,15 @@ export const DEFAULT_THRESHOLDS: Threshold[] = [
   { value: 4000, color: '#FF5A5F' },
 ];
 
-/** HomeView's category-led palette for devices, in order. */
-export const DEVICE_COLORS = ['#FF8A3D', '#4C8DFF', '#5AC8FA', '#BF5AF2', '#4CD07D', '#FFC94D', '#40C8C0', '#FF6FB1', '#7D6BFF', '#E2B33A'];
-export const OTHER_COLOR = 'rgba(160,160,170,.55)';
+/**
+ * HomeView's Mineral palette for devices, in order: one lightness and gentle
+ * chroma throughout (OKLCH 0.78 / 0.085), hues stepped by the golden angle so
+ * neighbouring devices always contrast. Each device's colour can be changed
+ * in the card editor.
+ */
+export const DEVICE_COLORS = ['#79C3E0', '#E6A1B2', '#9BC591', '#AAB3EE', '#E2A983', '#71C9C6', '#D7A4D1', '#BDBC7B', '#89BEEB', '#E9A29E', '#86C9A5', '#BDACE7'];
+/** "Other" is a neutral grey, always last. */
+export const OTHER_COLOR = '#8B8B95';
 
 let prefsCache: { at: number; value: Promise<EnergyPrefs> } | undefined;
 
