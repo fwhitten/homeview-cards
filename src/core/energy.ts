@@ -137,6 +137,10 @@ export const consumptionStats = (prefs: EnergyPrefs, mode: TotalMode): Array<{ i
   return out;
 };
 
+/** Energy statistics in kWh whatever each sensor reports in (Wh, kWh, MWh), as the Energy dashboard asks for them. */
+export const fetchEnergyStats = (hass: HomeAssistant, ids: string[], start: Date, end: Date, period: 'hour' | 'day' | 'week' | 'month') =>
+  fetchStatistics(hass, ids, start, end, period, ['change'], 60_000, { energy: 'kWh' });
+
 const change = (v: StatisticValue): number => (typeof v.change === 'number' && Number.isFinite(v.change) ? v.change : 0);
 
 /** kWh consumed between two moments, from hourly statistics. */
@@ -147,8 +151,9 @@ export const energyBetween = async (
   end: Date,
 ): Promise<number> => {
   if (!stats.length) return 0;
-  const res = await fetchStatistics(hass, stats.map((s) => s.id), start, end, 'hour', ['change']);
-  return stats.reduce((sum, s) => sum + s.sign * (res[s.id] ?? []).reduce((n, v) => n + change(v), 0), 0);
+  const res = await fetchEnergyStats(hass, stats.map((s) => s.id), start, end, 'hour');
+  // Consumption can't go below zero, even if an excluded device's meter runs ahead of the grid's.
+  return Math.max(0, stats.reduce((sum, s) => sum + s.sign * (res[s.id] ?? []).reduce((n, v) => n + change(v), 0), 0));
 };
 
 /** Sum each statistic's change into buckets [start, end). */

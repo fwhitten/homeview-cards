@@ -9,6 +9,7 @@ import {
   bucketCount,
   energyBetween,
   energyDevices,
+  fetchEnergyStats,
   fetchPowerSeries,
   fetchPrefs,
   formatEnergy,
@@ -27,7 +28,6 @@ import {
   type Threshold,
   type TotalMode,
 } from '../core/energy';
-import { fetchStatistics } from '../core/history';
 import { defineElement, registerCard } from '../core/register';
 import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 import './energy-devices-editor';
@@ -218,8 +218,8 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
             start: new Date(day.getTime() + h * 3_600_000),
             end: new Date(day.getTime() + (h + 1) * 3_600_000),
           }));
-          const res = await fetchStatistics(hass, stats.map((s) => s.id), day, now, 'hour', ['change']);
-          this.hourly = buckets.map((_, i) => stats.reduce((n, s) => n + s.sign * bucketize(res[s.id], buckets)[i], 0));
+          const res = await fetchEnergyStats(hass, stats.map((s) => s.id), day, now, 'hour');
+          this.hourly = buckets.map((_, i) => Math.max(0, stats.reduce((n, s) => n + s.sign * bucketize(res[s.id], buckets)[i], 0)));
         }
       } catch {
         this.today = undefined;

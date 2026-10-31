@@ -74,10 +74,12 @@ export const fetchStatistics = (
   period: '5minute' | 'hour' | 'day' | 'week' | 'month',
   types: Array<'change' | 'mean' | 'min' | 'max' | 'sum' | 'state'> = ['change'],
   ttlMs = 60_000,
+  /** Units to convert to, e.g. { energy: 'kWh' }, so sensors in Wh and kWh add up. */
+  units?: Record<string, string>,
 ): Promise<Record<string, StatisticValue[]>> => {
   const ids = [...new Set(statisticIds.filter(Boolean))].sort();
   if (!ids.length) return Promise.resolve({});
-  const key = `s|${ids.join(',')}|${start.getTime()}|${end.getTime()}|${period}|${types.join(',')}`;
+  const key = `s|${ids.join(',')}|${start.getTime()}|${end.getTime()}|${period}|${types.join(',')}|${JSON.stringify(units ?? {})}`;
   return cached(key, ttlMs, () =>
     hass.callWS<Record<string, StatisticValue[]>>({
       type: 'recorder/statistics_during_period',
@@ -86,6 +88,7 @@ export const fetchStatistics = (
       statistic_ids: ids,
       period,
       types,
+      ...(units ? { units } : {}),
     }),
   );
 };

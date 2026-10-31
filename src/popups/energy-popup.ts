@@ -8,6 +8,7 @@ import {
   bucketize,
   energyBetween,
   energyDevices,
+  fetchEnergyStats,
   fetchPowerSeries,
   niceMax,
   totalSignals,
@@ -25,7 +26,6 @@ import {
   type EnergyPrefs,
   type Threshold,
 } from '../core/energy';
-import { fetchStatistics } from '../core/history';
 import { gappedPaths } from '../core/chart';
 import { time } from '../core/format';
 import { devicesNow } from '../cards/energy-card';
@@ -173,8 +173,8 @@ export class HomeViewEnergyPopup extends PopupContent {
     const totals = totalStats(hass, this.prefs, this.cfg);
     const ids = [...devices.map((d) => d.stat), ...totals.map((t) => t.id)];
     try {
-      const res = await fetchStatistics(hass, ids, start, until, stat, ['change']);
-      const totalPer = buckets.map((_, i) => totals.reduce((n, t) => n + t.sign * bucketize(res[t.id], buckets)[i], 0));
+      const res = await fetchEnergyStats(hass, ids, start, until, stat);
+      const totalPer = buckets.map((_, i) => Math.max(0, totals.reduce((n, t) => n + t.sign * bucketize(res[t.id], buckets)[i], 0)));
       const series = devices.map((d) => ({ name: d.name, color: d.color, entity: d.icon, values: bucketize(res[d.stat], buckets) }));
       const other = totalPer.map((t, i) => Math.max(0, t - series.reduce((n, s) => n + s.values[i], 0)));
       if (other.some((v) => v > 0.01)) series.push({ name: 'Other', color: OTHER_COLOR, entity: undefined, values: other });

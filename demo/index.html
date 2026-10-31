@@ -136,7 +136,7 @@
       }
       if (msg.type === 'recorder/statistics_during_period') {
         const out = {};
-        for (const id of msg.statistic_ids) out[id] = series(30, (i) => ({ start: now - (30 - i) * 300e3, end: now - (29 - i) * 300e3, mean: id.includes('temp') ? 21 + Math.sin(i / 6) : 50 + Math.cos(i / 5) * 5, change: 0.3 }));
+        for (const id of msg.statistic_ids) out[id] = series(30, (i) => ({ start: now - (30 - i) * 300e3, end: now - (29 - i) * 300e3, mean: id.includes('temp') ? 21 + Math.sin(i / 6) : 50 + Math.cos(i / 5) * 5, change: id === 'sensor.ev_energy' ? (msg.units?.energy === 'kWh' ? 0.1 : 100) : 0.3 }));
         return out;
       }
       throw new Error('not in demo: ' + msg.type);
