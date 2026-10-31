@@ -80,6 +80,7 @@ export interface HomeAssistant {
   callWS<T>(message: Record<string, unknown>): Promise<T>;
   callApi<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, parameters?: Record<string, unknown>): Promise<T>;
   hassUrl(path?: string): string;
+  fetchWithAuth?(path: string, init?: RequestInit): Promise<Response>;
   localize(key: string, values?: Record<string, unknown>): string;
   formatEntityState(stateObj: HassEntity, state?: string): string;
   formatEntityAttributeValue(stateObj: HassEntity, attribute: string, value?: unknown): string;

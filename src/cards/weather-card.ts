@@ -21,6 +21,8 @@ export interface WeatherCardConfig extends BaseCardConfig {
   /** Precipitation probability (%) that counts as "rain due" in auto mode. */
   rain_threshold?: number;
   show_animation?: boolean;
+  /** Slot sunrise and sunset (from sun.sun) into the hourly forecast. Default true. */
+  show_sun?: boolean;
 }
 
 interface Forecast {
@@ -88,12 +90,12 @@ const EDITOR: EditorSpec = {
           },
         ]
       : []),
-    { name: 'show_animation', selector: { boolean: {} } },
+    { type: 'grid', name: '', schema: [{ name: 'show_animation', selector: { boolean: {} } }, ...(c.forecast !== 'next_hour' ? [{ name: 'show_sun', selector: { boolean: {} } }] : [])] },
     appearanceSection,
     actionsSection(),
     layoutSection,
   ],
-  labels: { entity: 'Weather', forecast: 'Forecast panel', rain_entity: 'Rain source', rain_attribute: 'Attribute with the minute list', rain_threshold: 'Rain chance that counts as rain due', show_animation: 'Animated sky' },
+  labels: { entity: 'Weather', forecast: 'Forecast panel', rain_entity: 'Rain source', rain_attribute: 'Attribute with the minute list', rain_threshold: 'Rain chance that counts as rain due', show_animation: 'Animated sky', show_sun: 'Sunrise and sunset in the hourly forecast' },
   helpers: { rain_entity: 'An entity with minute-by-minute precipitation, such as from Pirate Weather. Without it the next-hour view uses the hourly forecast.' },
 };
 
@@ -120,7 +122,7 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
   }
 
   protected defaults(): Partial<WeatherCardConfig> {
-    return { forecast: 'auto', rain_threshold: 50, show_animation: true, rain_attribute: 'forecast' };
+    return { forecast: 'auto', rain_threshold: 50, show_animation: true, show_sun: true, rain_attribute: 'forecast' };
   }
 
   protected watched() {
@@ -228,16 +230,48 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
     `;
   }
 
+  /** Sunrise and sunset from sun.sun, as Apple Weather slots them into the hourly row. */
+  private sunEvents(from: number, to: number): Array<{ t: number; rise: boolean }> {
+    const sun = this.hass?.states['sun.sun'];
+    if (!sun) return [];
+    return (
+      [
+        [sun.attributes.next_rising, true],
+        [sun.attributes.next_setting, false],
+      ] as Array<[string | undefined, boolean]>
+    )
+      .map(([iso, rise]) => ({ t: Date.parse(iso ?? ''), rise }))
+      .filter((e) => Number.isFinite(e.t) && e.t > from && e.t < to);
+  }
+
   private hourlyPanel(count: number) {
-    const rows = this.hourly.slice(0, count);
-    if (!rows.length) return html`<div class="caption">Forecast unavailable</div>`;
-    return html`<div class="hours" style="grid-template-columns:repeat(${rows.length},minmax(0,1fr))">
-      ${rows.map(
-        (f, i) => html`<div class="hour">
-          <span class="lab">${i === 0 ? 'Now' : time(this.hass, new Date(f.datetime)).slice(0, 2)}</span>
-          <ha-icon .icon=${ICON[f.condition ?? ''] ?? 'mdi:weather-cloudy'}></ha-icon>
-          <span class="t">${f.temperature != null ? `${Math.round(f.temperature)}°` : ''}</span>
-          <span class="p">${(f.precipitation_probability ?? 0) >= 10 ? `${Math.round(f.precipitation_probability!)}%` : ''}</span>
+    const hours = this.hourly.slice(0, count);
+    if (!hours.length) return html`<div class="caption">Forecast unavailable</div>`;
+    type Slot = { t: number; label: string; icon: string; value: string; rain?: number; sun?: boolean; rise?: boolean };
+    let slots: Slot[] = hours.map((f, i) => ({
+      t: Date.parse(f.datetime),
+      label: i === 0 ? 'Now' : time(this.hass, new Date(f.datetime)).slice(0, 2),
+      icon: ICON[f.condition ?? ''] ?? 'mdi:weather-cloudy',
+      value: f.temperature != null ? `${Math.round(f.temperature)}°` : '',
+      rain: f.precipitation_probability,
+    }));
+    if (this.config.show_sun !== false) {
+      const from = Math.max(Date.now(), slots[0].t);
+      const to = slots[slots.length - 1].t;
+      for (const e of this.sunEvents(from, to)) {
+        slots.push({ t: e.t, label: time(this.hass, new Date(e.t)), icon: e.rise ? 'mdi:weather-sunset-up' : 'mdi:weather-sunset-down', value: e.rise ? 'Sunrise' : 'Sunset', sun: true, rise: e.rise });
+      }
+      // Keep the column count: an inserted sunrise or sunset pushes the last hour off.
+      slots = slots.sort((a, b) => a.t - b.t).slice(0, count);
+    }
+    const anyRain = slots.some((s) => (s.rain ?? 0) >= 10);
+    return html`<div class="hours" style="grid-template-columns:${slots.map((s) => (s.sun ? 'minmax(0,1.5fr)' : 'minmax(0,1fr)')).join(' ')}">
+      ${slots.map(
+        (s) => html`<div class="hour ${s.sun ? 'sunev' : ''}">
+          <span class="lab">${s.label}</span>
+          <ha-icon .icon=${s.icon}></ha-icon>
+          <span class="t">${s.value}</span>
+          ${anyRain ? html`<span class="p">${(s.rain ?? 0) >= 10 ? `${Math.round(s.rain!)}%` : ''}</span>` : nothing}
         </div>`,
       )}
     </div>`;
@@ -353,12 +387,14 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
         font-weight: 600;
         letter-spacing: -0.01em;
       }
+      /* Proportional figures and a nudge for the glyph's side bearing keep big numbers flush with the text above. */
       .temp {
         font-size: 100px;
         font-weight: 300;
+        font-variant-numeric: proportional-nums;
         letter-spacing: -0.05em;
         line-height: 0.95;
-        margin-top: 2px;
+        margin: 2px 0 0 -0.055em;
       }
       .compact .cond {
         font-size: 20px;
@@ -392,16 +428,18 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
       .temp.sm {
         font-size: 64px;
       }
+      /* Inset evenly from the card's sides and bottom, with a concentric radius. */
       .panel {
-        margin-top: auto;
-        padding: 16px 18px 12px;
-        border-radius: 20px;
+        --_inset: 12px;
+        margin: auto calc(var(--_inset) - 26px) calc(var(--_inset) - 22px);
+        padding: 16px 18px 14px;
+        border-radius: calc(var(--_radius) - var(--_inset));
         background: rgba(8, 14, 26, 0.34);
       }
       .compact .panel {
         flex: 1;
         min-width: 0;
-        margin-top: 0;
+        margin: calc(var(--_inset) - 18px) calc(var(--_inset) - 20px) calc(var(--_inset) - 18px) 0;
         padding: 12px 14px;
         display: flex;
         flex-direction: column;
@@ -466,6 +504,13 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
       .hour .t {
         font-size: 21px;
         font-weight: 600;
+        white-space: nowrap;
+      }
+      .sunev ha-icon {
+        color: #ffd60a;
+      }
+      .sunev .t {
+        font-size: 18px;
       }
       .hour .p {
         height: 18px;

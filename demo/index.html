@@ -46,7 +46,11 @@
     'scene.good_night': st('scene.good_night', '2026-10-27T18:00:00', { friendly_name: 'Good night' }),
     'climate.living': st('climate.living', 'heat', { friendly_name: 'Living Room', current_temperature: 20.4, temperature: 21, hvac_action: 'heating', current_humidity: 48, target_temp_step: 0.5, min_temp: 7, max_temp: 30 }),
     'weather.home': st('weather.home', 'rainy', { friendly_name: 'Home', temperature: 12 }),
-    'sun.sun': st('sun.sun', 'below_horizon', {}),
+    'sun.sun': st('sun.sun', 'above_horizon', { next_setting: iso(now + 2.3 * 3600e3), next_rising: iso(now + 15 * 3600e3) }),
+    'weather.sunny': st('weather.sunny', 'partlycloudy', { friendly_name: 'Sunny', temperature: 13 }),
+    'sensor.tv_power': st('sensor.tv_power', '95', { friendly_name: 'TV', unit_of_measurement: 'W', device_class: 'power' }),
+    'sensor.dish_power': st('sensor.dish_power', '30', { friendly_name: 'Dishwasher', unit_of_measurement: 'W', device_class: 'power' }),
+    'sensor.ev_power': st('sensor.ev_power', '0', { friendly_name: 'EV Charger', unit_of_measurement: 'W', device_class: 'power' }),
     'camera.driveway': st('camera.driveway', 'idle', { friendly_name: 'Driveway', entity_picture: '' }),
     'binary_sensor.driveway_person': st('binary_sensor.driveway_person', 'on', { friendly_name: 'Person' }),
     'media_player.living': st('media_player.living', 'playing', { friendly_name: 'Living Room', media_title: 'Low Light', media_artist: 'The Quiet Rooms', media_duration: 235, media_position: 151, media_position_updated_at: iso(now), volume_level: 0.4, supported_features: 1 | 4 | 8 | 16 | 32 | 16384 | 32768 | 262144, shuffle: false, repeat: 'off' }),
@@ -80,6 +84,7 @@
   const series = (n, f) => Array.from({ length: n }, (_, i) => f(i));
   const hourly = series(8, (i) => ({ datetime: iso(now + i * 3600e3), condition: i < 2 ? 'rainy' : 'cloudy', temperature: 12 - i * 0.5, precipitation: i < 2 ? 0.6 - i * 0.3 : 0, precipitation_probability: i < 2 ? 80 - i * 25 : 10 }));
   const daily = [{ datetime: iso(now), condition: 'rainy', temperature: 14, templow: 8 }];
+  const dry = series(8, (i) => ({ datetime: iso(now - (now % 3600e3) + i * 3600e3), condition: i < 3 ? 'partlycloudy' : 'clear-night', temperature: 12 - i, precipitation: 0, precipitation_probability: 0 }));
 
   const log = [];
   const hass = {
@@ -100,6 +105,28 @@
       return {};
     },
     callWS: async (msg) => {
+      if (msg.type === 'energy/get_prefs') return {
+        energy_sources: [{ type: 'grid', stat_energy_from: 'sensor.grid_in', stat_rate: 'sensor.home_power' }],
+        device_consumption: [
+          { stat_consumption: 'sensor.tv_energy', stat_rate: 'sensor.tv_power', name: 'TV' },
+          { stat_consumption: 'sensor.dish_energy', stat_rate: 'sensor.dish_power', name: 'Dishwasher' },
+          { stat_consumption: 'sensor.ev_energy', stat_rate: 'sensor.ev_power', name: 'EV Charger' },
+        ],
+      };
+      if (msg.type === 'history/history_during_period' && msg.entity_ids.some((id) => id.includes('power'))) {
+        // Step-like power, like a real meter: plateaus with sharp edges every few minutes.
+        const start = Date.parse(msg.start_time), end = Date.parse(msg.end_time), out = {};
+        for (const id of msg.entity_ids) {
+          const rows = []; let t = start, k = 0;
+          while (t < end) {
+            const level = id === 'sensor.home_power' ? [180, 210, 650, 680, 1250, 1180, 240, 190][k % 8] + (k % 3) * 15 : id === 'sensor.tv_power' ? 95 : 30;
+            rows.push({ s: String(level), lu: t / 1000 });
+            t += (6 + (k * 7) % 17) * 60e3; k++;
+          }
+          out[id] = rows;
+        }
+        return out;
+      }
       if (msg.type === 'history/history_during_period') {
         const out = {};
         for (const id of msg.entity_ids) {
@@ -117,7 +144,7 @@
     callApi: async () => ({}),
     connection: {
       subscribeMessage: async (cb, msg) => {
-        if (msg.type === 'weather/subscribe_forecast') setTimeout(() => cb({ type: msg.forecast_type, forecast: msg.forecast_type === 'hourly' ? hourly : daily }), 50);
+        if (msg.type === 'weather/subscribe_forecast') setTimeout(() => cb({ type: msg.forecast_type, forecast: msg.forecast_type === 'hourly' ? (msg.entity_id === 'weather.sunny' ? dry : hourly) : daily }), 50);
         return async () => {};
       },
     },
@@ -127,7 +154,7 @@
     { type: 'custom:homeview-clock-card', view_layout: { column: 1, row: 1, column_span: 2, row_span: 2 } },
     { type: 'custom:homeview-weather-card', entity: 'weather.home', view_layout: { column: 3, row: 1, column_span: 2, row_span: 2 } },
     { type: 'custom:homeview-thermostat-card', entity: 'climate.living', view_layout: { column: 5, row: 1, column_span: 2, row_span: 1 } },
-    { type: 'custom:homeview-energy-card', power_entity: 'sensor.home_power', view_layout: { column: 5, row: 2, column_span: 1, row_span: 1 } },
+    { type: 'custom:homeview-energy-card', view_layout: { column: 5, row: 2, column_span: 1, row_span: 1 } },
     { type: 'custom:homeview-comfort-card', area: 'bedroom', view_layout: { column: 6, row: 2, column_span: 1, row_span: 1 } },
     { type: 'custom:homeview-camera-card', entity: 'camera.driveway', view: 'snapshot', events: [{ entity: 'binary_sensor.driveway_person', label: 'Person', icon: 'mdi:account' }], view_layout: { column: 1, row: 3, column_span: 2, row_span: 2 } },
     { type: 'custom:homeview-media-card', entity: 'media_player.living', view_layout: { column: 3, row: 3, column_span: 2, row_span: 1 } },
@@ -139,6 +166,8 @@
     { type: 'custom:homeview-scene-card', entity: 'scene.movie', color: '#7D6BFF', note: 'Lights 10%, TV on', view_layout: { screen: 2 } },
     { type: 'custom:homeview-scene-card', entity: 'scene.good_night', color: '#5E5CE6', view_layout: { screen: 2 } },
     { type: 'custom:homeview-vacuum-card', entity: 'vacuum.robot', battery_entity: 'sensor.robot_battery', view_layout: { screen: 2, column_span: 2 } },
+    { type: 'custom:homeview-energy-card', view_layout: { screen: 2, column_span: 2, row_span: 1 } },
+    { type: 'custom:homeview-weather-card', entity: 'weather.sunny', forecast: 'hourly', view_layout: { screen: 2, column_span: 2, row_span: 2 } },
   ];
 
   const helpers = { createCardElement(cfg) { const el = document.createElement(cfg.type.replace('custom:', '')); el.setConfig(cfg); return el; } };

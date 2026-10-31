@@ -135,21 +135,44 @@ views:
         area: living_room
 ```
 
-Cards without `view_layout` flow into the next free cells using their own
-size. The grid sizes itself to the screen (`columns` / `rows` default to
-`auto`, fitting ~200 px tiles): 6 × 4 on a landscape iPad Pro, 4 × 5 in
-portrait. Set numbers to fix it. Under 900 px wide it becomes a scrolling
-two-column list.
+The grid sizes itself to the screen (`columns` / `rows` default to `auto`,
+fitting ~200 px tiles): 6 × 4 on a landscape iPad Pro, 4 × 5 in portrait. Set
+numbers to fix it. Under 900 px wide it becomes a scrolling two-column list.
 
-**Screens.** Add `screens: 3` to the view and put cards on a screen with
-`view_layout: { screen: 2 }`. Swipe left and right between them; dots in the
-bottom border show where you are and can be tapped.
+**Positions are kept per grid size.** Arrange the view on the wall panel and
+the positions are saved for its grid (say `6x4`); arrange it again on a phone
+or in portrait and those are saved separately, so neither disturbs the other.
+On a grid you haven't arranged yet, cards pack into the first free space in the
+order of the grid you've arranged most, never overlapping, and spill onto
+another screen when they run out of room. Cards without positions pack the
+same way, using their own size.
 
-**Editing.** In the dashboard's edit mode each card gets a toolbar: drag the
-card to move it, drag the corner handle to resize it, use the arrows to send
-it to another screen, or edit and delete it. The bottom border has **Card**,
-**Screen** and (when the last screen is empty) **Last screen** buttons.
-Positions are saved to each card's `view_layout`.
+```yaml
+view_layout:
+  column_span: 2          # size is shared by every grid
+  row_span: 1
+  grids:
+    6x4: { screen: 1, column: 3, row: 1 }
+    4x5: { screen: 1, column: 1, row: 3 }
+```
+
+Single positions from earlier versions (`column`, `row`, `screen`) still work:
+they place the card until you first arrange it.
+
+**Screens.** Add `screens: 3` to the view for at least three screens. Swipe
+left and right between them; dots in the bottom border show where you are and
+can be tapped.
+
+**Editing.** In the dashboard's edit mode each card gets a drag handle at the
+top: drag it to move the card, or tap it to type in a column and row, pick a
+spot on a map of the grid, change the size, or send the card to another (or a
+new) screen. Cards in the way move to the nearest free space. The corner
+handle resizes, and the pencil and bin edit and delete. Along the bottom
+border: **Card**, **Screen**, **Last screen** (when it's empty) and
+**Wallpaper**, which picks the HomeView gradient, the theme's photos, an image
+URL or an upload, for every mode or one per mode. Tap **Header** to turn the
+greeting on or off and add, reorder and edit the chips, visibility conditions
+included.
 
 In a sections dashboard, put `homeview-chips-card` (with `show_greeting`),
 `homeview-ambient-card` and `homeview-notification-card` on the page
@@ -193,6 +216,7 @@ entity: weather.home
 forecast: auto        # auto | next_hour | hourly
 rain_entity: sensor.minutely_precipitation   # optional
 rain_attribute: forecast
+show_sun: true        # sunrise and sunset in the hourly forecast, from sun.sun
 ```
 
 Forecasts come from `weather/subscribe_forecast`. Home Assistant's weather
@@ -243,15 +267,28 @@ play/pause, next, repeat, and mute.
 type: custom:homeview-energy-card
 style: threshold     # threshold (A) | distribution (B) | total (C)
 total_mode: home     # home | grid
+hours: 3
+points_per_hour: 60  # line resolution; empty = one point every two pixels
+y_max: 3000          # top of the graph in W; empty = scales to the peak
 thresholds:
   - { value: 0, color: "#4CD07D" }
   - { value: 1500, color: "#FFB340" }
   - { value: 4000, color: "#FF5A5F" }
+devices:
+  - { stat: sensor.tv_energy, name: Telly, color: "#4C8DFF" }
+  - { stat: sensor.fridge_energy, hidden: true }   # left out of graphs, still in the total (as Other)
+  - { stat: sensor.ev_energy, excluded: true }     # taken out of the total and every graph
 ```
 
 Reads the Energy dashboard: grid / solar / battery power for the live
 reading, and device consumption (with each device's power sensor) for the
-breakdown. Set `power_entity` to use a single sensor instead. The pop-up shows
+breakdown. Set `power_entity` to use a single sensor instead. The power line
+uses the same data and bucketing as
+[energy-breakdown-card](https://github.com/fwhitten/energy-breakdown-card):
+recorder history up to 6 hours (five-minute statistics beyond), averaged per
+point with the last reading carried through quiet spells. The editor's
+**Devices** section lists every Energy dashboard device to rename, recolour,
+hide or exclude. The pop-up shows
 power now, today / this week / this month, and a per-device breakdown by day,
 week, month or year.
 
@@ -357,7 +394,9 @@ scenes:
 
 ### Status chips
 
-Chips take Home Assistant's own badge options, so badge YAML pastes straight in:
+Chips take Home Assistant's own badge options, so badge YAML pastes straight in. In the
+visual editor, chips are a list to add, reorder and open up, with visibility
+conditions (entity state, number, screen size) built in:
 
 ```yaml
 type: custom:homeview-chips-card

@@ -59,3 +59,70 @@ export const easeSeries = (vals: number[], radius = 2): number[] =>
     }
     return sum / n;
   });
+
+/**
+ * Monotone cubic through the points (as d3's curveMonotoneX): smooth, but it
+ * never overshoots, so a flat run of power stays flat instead of bulging.
+ */
+export const monotonePath = (pts: Point[]): string => {
+  const n = pts.length;
+  if (!n) return '';
+  if (n < 3) return linePath(pts);
+  const dx: number[] = [];
+  const m: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    dx.push(pts[i + 1][0] - pts[i][0]);
+    m.push((pts[i + 1][1] - pts[i][1]) / (dx[i] || 1));
+  }
+  const t: number[] = [m[0]];
+  for (let i = 1; i < n - 1; i++) {
+    if (m[i - 1] * m[i] <= 0) t.push(0);
+    else {
+      const w1 = 2 * dx[i] + dx[i - 1];
+      const w2 = dx[i] + 2 * dx[i - 1];
+      t.push((w1 + w2) / (w1 / m[i - 1] + w2 / m[i]));
+    }
+  }
+  t.push(m[n - 2]);
+  let d = `M${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const h = dx[i] / 3;
+    d += ` C${(pts[i][0] + h).toFixed(1)} ${(pts[i][1] + h * t[i]).toFixed(1)} ${(pts[i + 1][0] - h).toFixed(1)} ${(pts[i + 1][1] - h * t[i + 1]).toFixed(1)} ${pts[i + 1][0].toFixed(1)} ${pts[i + 1][1].toFixed(1)}`;
+  }
+  return d;
+};
+
+/**
+ * Line and filled area for a series with gaps (null), spread across x0..x1
+ * and scaled 0..max onto bottom..top. A gap breaks the line rather than
+ * diving to zero.
+ */
+export const gappedPaths = (
+  vals: Array<number | null>,
+  x0: number,
+  x1: number,
+  top: number,
+  bottom: number,
+  max: number,
+): { line: string; area: string } => {
+  const n = Math.max(1, vals.length - 1);
+  const lines: string[] = [];
+  const areas: string[] = [];
+  let run: Point[] = [];
+  const flush = () => {
+    if (run.length === 1) run.push([run[0][0] + 1, run[0][1]]);
+    if (run.length > 1) {
+      const line = monotonePath(run);
+      lines.push(line);
+      areas.push(`${line} L${run[run.length - 1][0].toFixed(1)} ${bottom} L${run[0][0].toFixed(1)} ${bottom} Z`);
+    }
+    run = [];
+  };
+  vals.forEach((v, i) => {
+    if (v === null) return flush();
+    const y = bottom - (Math.min(Math.max(v, 0), max) / (max || 1)) * (bottom - top);
+    run.push([x0 + ((x1 - x0) * i) / n, y]);
+  });
+  flush();
+  return { line: lines.join(' '), area: areas.join(' ') };
+};

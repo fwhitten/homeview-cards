@@ -2,24 +2,27 @@ import { css, html, nothing, svg, type PropertyValues } from 'lit';
 import { state } from 'lit/decorators.js';
 import { HomeViewCard, type BaseCardConfig } from '../core/base-card';
 import type { GridOptions, HomeAssistant } from '../core/types';
-import { fetchHistory, resample, samples } from '../core/history';
-import { areaPath, easeSeries, mapPoints, smoothPath } from '../core/chart';
+import { gappedPaths } from '../core/chart';
 import {
   DEFAULT_THRESHOLDS,
-  DEVICE_COLORS,
   OTHER_COLOR,
-  consumptionStats,
+  bucketCount,
   energyBetween,
+  energyDevices,
+  fetchPowerSeries,
   fetchPrefs,
   formatEnergy,
   formatPower,
   gradientStops,
-  powerSignals,
+  niceMax,
   readTotal,
   readWatts,
   startOfDay,
-  topLevelDevices,
+  totalSignals,
+  totalStats,
   bucketize,
+  type DeviceOverride,
+  type DeviceSettings,
   type EnergyPrefs,
   type Threshold,
   type TotalMode,
@@ -27,6 +30,7 @@ import {
 import { fetchStatistics } from '../core/history';
 import { defineElement, registerCard } from '../core/register';
 import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
+import './energy-devices-editor';
 
 export interface EnergyCardConfig extends BaseCardConfig {
   /** A: live power over a threshold-coloured sparkline. B: where it's going now. C: today's total first. */
@@ -37,6 +41,12 @@ export interface EnergyCardConfig extends BaseCardConfig {
   total_mode?: TotalMode;
   thresholds?: Threshold[];
   hours?: number;
+  /** Line resolution. Empty: one point every two pixels, like energy-breakdown-card. */
+  points_per_hour?: number;
+  /** Fix the top of the graph, in watts. Empty: scales to the peak. */
+  y_max?: number;
+  /** Rename, recolour, hide or exclude Energy dashboard devices. */
+  devices?: DeviceOverride[];
 }
 
 export interface DeviceNow {
@@ -46,18 +56,15 @@ export interface DeviceNow {
   entity?: string;
 }
 
-const SPARK_POINTS = 60;
-
-/** Live devices from the Energy dashboard, with "Other" as the remainder. */
-export const devicesNow = (hass: HomeAssistant, prefs: EnergyPrefs | undefined, total: number | null): DeviceNow[] => {
+/**
+ * Live devices from the Energy dashboard, with "Other" as the remainder.
+ * Hidden devices fall into Other; excluded ones are already out of the total.
+ */
+export const devicesNow = (hass: HomeAssistant, prefs: EnergyPrefs | undefined, total: number | null, cfg: DeviceSettings = {}): DeviceNow[] => {
   if (!prefs) return [];
-  const list = topLevelDevices(prefs)
-    .map((d, i) => ({
-      name: d.name || hass.states[d.stat_rate ?? '']?.attributes.friendly_name || d.stat_consumption,
-      color: DEVICE_COLORS[i % DEVICE_COLORS.length],
-      watts: Math.max(0, readWatts(hass, d.stat_rate) ?? 0),
-      entity: d.stat_rate ?? (d.stat_consumption.includes('.') ? d.stat_consumption : undefined),
-    }))
+  const list = energyDevices(hass, prefs, cfg)
+    .filter((d) => !d.hidden && !d.excluded)
+    .map((d) => ({ name: d.name, color: d.color, watts: Math.max(0, readWatts(hass, d.power) ?? 0), entity: d.icon }))
     .filter((d) => d.watts > 0)
     .sort((a, b) => b.watts - a.watts);
   const known = list.reduce((n, d) => n + d.watts, 0);
@@ -73,7 +80,19 @@ const EDITOR: EditorSpec = {
       { name: 'name', selector: { text: {} } },
       { name: 'power_entity', selector: { entity: { domain: 'sensor', device_class: 'power' } } },
       ...(!c.power_entity ? [{ name: 'total_mode', selector: choose([['home', 'Whole home (grid, solar and battery)'], ['grid', 'Grid only']]) }] : []),
-      ...(style === 'threshold' ? [{ name: 'hours', selector: { number: { min: 1, max: 24, mode: 'slider', unit_of_measurement: 'h' } } }] : []),
+      ...(style === 'threshold'
+        ? [
+            { name: 'hours', selector: { number: { min: 1, max: 24, mode: 'slider', unit_of_measurement: 'h' } } },
+            {
+              type: 'grid',
+              name: '',
+              schema: [
+                { name: 'points_per_hour', selector: { number: { min: 2, max: 720, mode: 'box', unit_of_measurement: 'per hour' } } },
+                { name: 'y_max', selector: { number: { min: 0, mode: 'box', unit_of_measurement: 'W' } } },
+              ],
+            },
+          ]
+        : []),
       ...(style !== 'total'
         ? [
             {
@@ -96,12 +115,16 @@ const EDITOR: EditorSpec = {
       layoutSection,
     ];
   },
-  labels: { style: 'Style', power_entity: 'Power sensor', total_mode: 'Count', hours: 'Sparkline covers', thresholds: 'Power colours' },
+  labels: { style: 'Style', power_entity: 'Power sensor', total_mode: 'Count', hours: 'Graph covers', points_per_hour: 'Graph points', y_max: 'Graph top', thresholds: 'Power colours' },
   helpers: {
     power_entity: 'Leave empty to use the power sensors set up in the Energy dashboard',
     thresholds: 'The line takes each colour from that power upwards. Defaults: green, amber from 1.5 kW, red from 4 kW',
     tap_action: 'Default: opens the energy pop-up',
+    points_per_hour: 'Empty: one point every two pixels',
+    y_max: 'Empty: scales to the peak',
   },
+  custom: (hass, config, set) =>
+    html`<homeview-energy-devices-editor .hass=${hass} .config=${config} @devices-changed=${(e: CustomEvent<DeviceOverride[] | undefined>) => set({ ...config, devices: e.detail })}></homeview-energy-devices-editor>`,
 };
 
 /**
@@ -111,12 +134,13 @@ const EDITOR: EditorSpec = {
  */
 export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
   @state() private prefs?: EnergyPrefs;
-  @state() private spark: number[] = [];
+  @state() private spark: Array<number | null> = [];
   @state() private today?: number;
   @state() private yesterday?: number;
   @state() private hourly: number[] = [];
   @state() private error?: string;
   private refresh?: number;
+  private gradientId = `hvpw${Math.random().toString(36).slice(2, 8)}`;
 
   static getConfigElement() {
     return editorFor(EDITOR);
@@ -135,18 +159,17 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
   }
 
   private get signals() {
-    if (this.config.power_entity) return [{ entity: this.config.power_entity, sign: 1 as const }];
-    return this.prefs ? powerSignals(this.prefs, this.config.total_mode ?? 'home') : [];
+    return this.hass ? totalSignals(this.hass, this.prefs, this.config) : [];
   }
 
   protected watched() {
-    const devices = this.prefs ? topLevelDevices(this.prefs).map((d) => d.stat_rate) : [];
+    const devices = this.prefs && this.hass ? energyDevices(this.hass, this.prefs, this.config).map((d) => d.power) : [];
     return [...this.signals.map((s) => s.entity), ...(this.config.style === 'distribution' ? devices : [])];
   }
 
   connectedCallback(): void {
     super.connectedCallback();
-    this.refresh = window.setInterval(() => void this.load(), 5 * 60_000);
+    this.refresh = window.setInterval(() => void this.load(), 2 * 60_000);
   }
 
   disconnectedCallback(): void {
@@ -174,20 +197,16 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
     const hass = this.hass;
     const hours = this.config.hours ?? 3;
     const sigs = this.signals;
-    if (sigs.length) {
+    if (sigs.length && (this.config.style ?? 'threshold') === 'threshold') {
       try {
-        const hist = await fetchHistory(hass, sigs.map((s) => s.entity), hours, { ttlMs: 60_000 });
-        const series = sigs.map((s) => resample(samples(hist[s.entity]), hours, SPARK_POINTS).map((v) => v * s.sign));
-        const unit = (e: string) => ({ kW: 1000, MW: 1e6 } as Record<string, number>)[hass.states[e]?.attributes.unit_of_measurement] ?? 1;
-        this.spark = series[0]
-          ? series[0].map((_, i) => series.reduce((sum, ser, k) => sum + (ser[i] ?? 0) * unit(sigs[k].entity), 0))
-          : [];
+        const width = this.getBoundingClientRect().width || 420;
+        this.spark = await fetchPowerSeries(hass, sigs, hours, bucketCount(hours, this.config.points_per_hour, width));
       } catch {
         this.spark = [];
       }
     }
     if (this.prefs) {
-      const stats = consumptionStats(this.prefs, this.config.total_mode ?? 'home');
+      const stats = totalStats(hass, this.prefs, this.config);
       const now = new Date();
       const day = startOfDay(now);
       const yStart = new Date(day.getTime() - 86_400_000);
@@ -212,20 +231,31 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
     return this.hass ? readTotal(this.hass, this.signals) : null;
   }
 
-  private sparkline(width: number, height: number, top: number) {
-    if (this.spark.length < 2) return nothing;
+  private get peak(): number | undefined {
+    const vals = this.spark.filter((v): v is number => v !== null);
+    return vals.length ? Math.max(...vals) : undefined;
+  }
+
+  /**
+   * The power line fills whatever height the text leaves, scaled to its own
+   * peak (or y_max) so a quiet evening still reads as a shape, not a flat line.
+   */
+  private sparkline() {
+    if (this.spark.length < 2) return html`<div class="plot"></div>`;
+    const W = 1000;
+    const H = 100;
     const thresholds = this.config.thresholds?.length ? this.config.thresholds : DEFAULT_THRESHOLDS;
-    const max = Math.max(...this.spark, thresholds[thresholds.length - 1]?.value ?? 4000) * 1.05;
-    const line = smoothPath(mapPoints(easeSeries(this.spark), 0, width, top, height - 2, 0, max));
+    const max = this.config.y_max && this.config.y_max > 0 ? this.config.y_max : niceMax(Math.max(this.peak ?? 0, 100), 2);
+    const { line, area } = gappedPaths(this.spark, 0, W, 3, H, max);
     const stops = gradientStops(thresholds, max);
-    const id = `pw${this.config.style}`;
-    return svg`<svg class="spark" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
-      <defs><linearGradient id=${id} gradientUnits="userSpaceOnUse" x1="0" y1=${height - 2} x2="0" y2=${top}>
+    const id = this.gradientId;
+    return html`<div class="plot">${svg`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+      <defs><linearGradient id=${id} gradientUnits="userSpaceOnUse" x1="0" y1=${H} x2="0" y2="0">
         ${stops.map((s) => svg`<stop offset=${s.offset} stop-color=${s.color}></stop>`)}
       </linearGradient></defs>
-      <path d=${areaPath(line, width, height)} fill="url(#${id})" fill-opacity=".22"></path>
+      <path d=${area} fill="url(#${id})" fill-opacity=".22"></path>
       <path d=${line} fill="none" stroke="url(#${id})" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>
-    </svg>`;
+    </svg>`}</div>`;
   }
 
   private bolt() {
@@ -254,7 +284,7 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
     }
 
     if (style === 'distribution') {
-      const devices = devicesNow(this.hass, this.prefs, w);
+      const devices = devicesNow(this.hass, this.prefs, w, this.config);
       const total = devices.reduce((n, d) => n + d.watts, 0) || 1;
       return html`<ha-card class="tile clickable" tabindex="0" role="button" aria-label="${name} ${p.value} ${p.unit}">
         <div class="in">
@@ -298,16 +328,17 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
       </ha-card>`;
     }
 
-    // A: threshold sparkline
-    const peak = this.spark.length ? Math.max(...this.spark) : undefined;
+    // A: a compact reading on top, so the power line gets the rest of the tile.
+    const peak = this.peak;
     const pk = peak != null ? formatPower(peak, lang) : undefined;
-    return html`<ha-card class="tile clickable" tabindex="0" role="button" aria-label="${name} ${p.value} ${p.unit}">
-      ${wide ? this.sparkline(426, 208, 100) : this.sparkline(203, 208, 126)}
-      <div class="pad ${wide ? 'row' : ''}">
-        <div>
-          <div class="hd">${this.bolt()}<span class="name">${name}</span></div>
-          <div class="reading top"><span class="value ${wide ? 'xl' : ''}">${p.value}</span><span class="unit">${p.unit}</span></div>
-          ${wide ? nothing : html`<div class="sub small">${todayText ? `Today ${todayText}` : ''}</div>`}
+    return html`<ha-card class="tile clickable spark-tile" tabindex="0" role="button" aria-label="${name} ${p.value} ${p.unit}">
+      <div class="pad row">
+        <div class="lead">
+          ${this.bolt()}
+          <div>
+            <div class="name">${name}</div>
+            <div class="reading"><span class="value ${wide ? '' : 'sm'}">${p.value}</span><span class="unit">${p.unit}</span></div>
+          </div>
         </div>
         ${wide
           ? html`<div class="right">
@@ -317,6 +348,7 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
             </div>`
           : nothing}
       </div>
+      ${this.sparkline()}
     </ha-card>`;
   }
 
@@ -331,16 +363,43 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
   static styles = [
     ...HomeViewCard.styles,
     css`
-      .spark {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        pointer-events: none;
+      ha-card.spark-tile {
+        display: flex;
+        flex-direction: column;
       }
       .pad {
         position: relative;
-        padding: 18px 20px;
+        flex: none;
+        padding: 18px 20px 0;
+      }
+      .lead {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        min-width: 0;
+      }
+      .lead .name {
+        font-size: 17px;
+        font-weight: 600;
+        color: var(--_ink2);
+        line-height: 1.1;
+      }
+      .lead .reading {
+        margin-top: 2px;
+      }
+      .lead .bolt {
+        margin-top: 4px;
+      }
+      .plot {
+        flex: 1;
+        min-height: 40px;
+        margin-top: 6px;
+        pointer-events: none;
+      }
+      .plot svg {
+        display: block;
+        width: 100%;
+        height: 100%;
       }
       .row {
         display: flex;
@@ -378,11 +437,15 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
       .value {
         font-size: 52px;
       }
+      .spark-tile .value {
+        font-size: 50px;
+        line-height: 1;
+      }
       .value.sm {
         font-size: 46px;
       }
-      .value.xl {
-        font-size: 60px;
+      .spark-tile .value.sm {
+        font-size: 36px;
       }
       .small {
         font-size: 16px;

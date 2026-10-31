@@ -68,7 +68,7 @@ export const fetchPrefs = (hass: HomeAssistant): Promise<EnergyPrefs> => {
 export const topLevelDevices = (prefs: EnergyPrefs): DeviceConsumption[] =>
   (prefs.device_consumption ?? []).filter((d) => !d.included_in_stat);
 
-interface Signal {
+export interface Signal {
   entity: string;
   sign: 1 | -1;
 }
@@ -206,3 +206,202 @@ export const formatPower = (watts: number, language?: string): { value: string; 
 
 export const formatEnergy = (kwh: number, language?: string): string =>
   new Intl.NumberFormat(language, { maximumFractionDigits: kwh >= 100 ? 0 : 1, minimumFractionDigits: kwh >= 100 ? 0 : 1 }).format(kwh);
+
+// ---------------------------------------------------------------- devices
+
+/** Per-device settings, keyed by the device's energy statistic, as in energy-breakdown-card. */
+export interface DeviceOverride {
+  stat: string;
+  name?: string;
+  color?: string;
+  /** Left out of the breakdowns, but still counted in the total (it joins "Other"). */
+  hidden?: boolean;
+  /** Taken out of the total entirely, and so out of every graph. */
+  excluded?: boolean;
+  /** A power sensor to use instead of the one set in the Energy dashboard. */
+  power_entity?: string;
+}
+
+export interface EnergyDevice {
+  stat: string;
+  name: string;
+  color: string;
+  /** Power entity, in watts. */
+  power?: string;
+  /** Something to take an icon from. */
+  icon?: string;
+  hidden: boolean;
+  excluded: boolean;
+}
+
+export interface DeviceSettings {
+  power_entity?: string;
+  total_mode?: TotalMode;
+  devices?: DeviceOverride[];
+}
+
+/** Top-level devices from the Energy dashboard with the card's overrides applied. Colours stay put when others hide. */
+export const energyDevices = (hass: HomeAssistant, prefs: EnergyPrefs | undefined, cfg: DeviceSettings): EnergyDevice[] => {
+  if (!prefs) return [];
+  const overrides = new Map((cfg.devices ?? []).map((d) => [d.stat, d]));
+  return topLevelDevices(prefs).map((d, i) => {
+    const o = overrides.get(d.stat_consumption);
+    const power = o?.power_entity || d.stat_rate;
+    return {
+      stat: d.stat_consumption,
+      name: o?.name || d.name || hass.states[power ?? '']?.attributes.friendly_name || hass.states[d.stat_consumption]?.attributes.friendly_name || d.stat_consumption,
+      color: o?.color || DEVICE_COLORS[i % DEVICE_COLORS.length],
+      power,
+      icon: power ?? (d.stat_consumption.includes('.') ? d.stat_consumption : undefined),
+      hidden: !!o?.hidden,
+      excluded: !!o?.excluded,
+    };
+  });
+};
+
+/** Power signals for the card's total: its sensor or the Energy dashboard's, less any excluded devices. */
+export const totalSignals = (hass: HomeAssistant, prefs: EnergyPrefs | undefined, cfg: DeviceSettings): Signal[] => {
+  const base: Signal[] = cfg.power_entity ? [{ entity: cfg.power_entity, sign: 1 }] : prefs ? powerSignals(prefs, cfg.total_mode ?? 'home') : [];
+  const excluded = energyDevices(hass, prefs, cfg)
+    .filter((d) => d.excluded && d.power)
+    .map((d) => ({ entity: d.power!, sign: -1 as const }));
+  return [...base, ...excluded];
+};
+
+/** Energy statistics for the card's total, less any excluded devices. */
+export const totalStats = (hass: HomeAssistant, prefs: EnergyPrefs, cfg: DeviceSettings): Array<{ id: string; sign: 1 | -1 }> => [
+  ...consumptionStats(prefs, cfg.total_mode ?? 'home'),
+  ...energyDevices(hass, prefs, cfg)
+    .filter((d) => d.excluded)
+    .map((d) => ({ id: d.stat, sign: -1 as const })),
+];
+
+// ---------------------------------------------------------------- power series
+
+/**
+ * Up to this many hours the recorder's history is used, which keeps every
+ * reading; beyond it five-minute statistics, which outlive the purge window.
+ */
+export const HISTORY_WINDOW_HOURS = 6;
+
+type Sample = { t: number; v: number | null };
+
+const historySamples = async (hass: HomeAssistant, ids: string[], start: Date, end: Date): Promise<Record<string, Sample[]>> => {
+  const res = await hass.callWS<Record<string, Array<{ s: string; lu: number }>>>({
+    type: 'history/history_during_period',
+    start_time: start.toISOString(),
+    end_time: end.toISOString(),
+    entity_ids: ids,
+    minimal_response: true,
+    no_attributes: true,
+    significant_changes_only: false,
+  });
+  const out: Record<string, Sample[]> = {};
+  for (const id of ids) {
+    const scale = UNIT[hass.states[id]?.attributes.unit_of_measurement ?? 'W'] ?? 1;
+    out[id] = (res?.[id] ?? []).map((e) => {
+      const v = parseFloat(e.s);
+      return { t: e.lu * 1000, v: Number.isFinite(v) ? v * scale : null };
+    });
+  }
+  return out;
+};
+
+const statisticSamples = async (hass: HomeAssistant, ids: string[], start: Date, end: Date): Promise<Record<string, Sample[]>> => {
+  const res = await hass.callWS<Record<string, Array<{ start: number; mean?: number | null }>>>({
+    type: 'recorder/statistics_during_period',
+    start_time: start.toISOString(),
+    end_time: end.toISOString(),
+    statistic_ids: ids,
+    period: '5minute',
+    types: ['mean'],
+    units: { power: 'W' },
+  });
+  const out: Record<string, Sample[]> = {};
+  for (const id of ids) {
+    out[id] = (res?.[id] ?? []).map((e) => ({ t: e.start, v: typeof e.mean === 'number' && Number.isFinite(e.mean) ? e.mean : null }));
+  }
+  return out;
+};
+
+/**
+ * One value per bucket: the mean of the readings inside it, or the last
+ * reading carried forward through quiet stretches. Unavailable leaves a gap.
+ */
+export const bucketSamples = (samples: Sample[], start: number, end: number, buckets: number): Array<number | null> => {
+  const out = new Array<number | null>(buckets).fill(null);
+  if (buckets <= 0 || end <= start) return out;
+  const width = (end - start) / buckets;
+  let i = 0;
+  let carried: number | null = null;
+  while (i < samples.length && samples[i].t < start) carried = samples[i++].v;
+  for (let b = 0; b < buckets; b++) {
+    const until = start + width * (b + 1);
+    let sum = 0;
+    let n = 0;
+    let gap = false;
+    while (i < samples.length && samples[i].t < until) {
+      const v = samples[i++].v;
+      if (v === null) {
+        gap = true;
+        carried = null;
+      } else {
+        sum += v;
+        n++;
+        carried = v;
+      }
+    }
+    out[b] = n ? sum / n : gap ? null : carried;
+  }
+  return out;
+};
+
+/**
+ * How many points a line is drawn from: `points_per_hour` when set, otherwise
+ * one every two pixels of width, as energy-breakdown-card does.
+ */
+export const bucketCount = (hours: number, pointsPerHour: number | undefined, width: number): number =>
+  pointsPerHour && pointsPerHour > 0
+    ? Math.max(2, Math.min(2000, Math.round(hours * pointsPerHour)))
+    : Math.max(24, Math.min(600, Math.round((width || 300) / 2)));
+
+/**
+ * Net power over the last `hours`, from the same recorder data and with the
+ * same bucketing as energy-breakdown-card's power graph.
+ */
+export const fetchPowerSeries = async (
+  hass: HomeAssistant,
+  signals: Signal[],
+  hours: number,
+  buckets: number,
+): Promise<Array<number | null>> => {
+  const ids = [...new Set(signals.map((s) => s.entity))];
+  if (!ids.length) return [];
+  const end = new Date();
+  const start = new Date(end.getTime() - hours * 3_600_000);
+  const fetcher = hours > HISTORY_WINDOW_HOURS ? statisticSamples : historySamples;
+  const data = await fetcher(hass, ids, start, end);
+  const series = signals.map((s) => bucketSamples(data[s.entity] ?? [], start.getTime(), end.getTime(), buckets).map((v) => (v === null ? null : v * s.sign)));
+  return Array.from({ length: buckets }, (_, i) => {
+    let total = 0;
+    let seen = false;
+    for (const ser of series) {
+      const v = ser[i];
+      if (v === null) continue;
+      total += v;
+      seen = true;
+    }
+    return seen ? total : null;
+  });
+};
+
+const STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+
+/** Round an axis maximum up to a value that divides into readable steps (from energy-breakdown-card). */
+export const niceMax = (value: number, divisions = 4): number => {
+  if (!Number.isFinite(value) || value <= 0) return divisions;
+  const rough = (value * 1.02) / divisions;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rough)));
+  const step = STEPS.find((s) => rough / magnitude <= s) ?? 10;
+  return step * magnitude * divisions;
+};

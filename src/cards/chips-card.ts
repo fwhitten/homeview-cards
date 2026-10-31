@@ -9,6 +9,7 @@ import { greeting, longDate } from '../core/format';
 import { runAction } from '../core/actions';
 import { defineElement, registerCard } from '../core/register';
 import { appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
+import './chips-editor';
 
 /**
  * One chip. Accepts Home Assistant's own badge options (show_name, show_state,
@@ -107,72 +108,17 @@ const themeColor = (name: string): string =>
 
 const ACTIVE_STATES = ['on', 'open', 'unlocked', 'heat', 'heating', 'cleaning', 'playing', 'triggered', 'armed_away', 'armed_home', 'armed_night'];
 
-const test = {
-  object: {
-    fields: {
-      entity: { label: "Entity (defaults to the chip's)", selector: { entity: {} } },
-      state: { label: 'State is', selector: { text: {} } },
-      state_not: { label: 'State is not', selector: { text: {} } },
-      above: { label: 'Above', selector: { number: { mode: 'box' } } },
-      below: { label: 'Below', selector: { number: { mode: 'box' } } },
-    },
-  },
-};
-
 const EDITOR: EditorSpec = {
   schema: () => [
     { name: 'style', selector: choose([['full', 'A: chips'], ['compact', 'B: icons with badges'], ['glance', 'C: big glance chips']], 'list') },
     { type: 'grid', name: '', schema: [{ name: 'show_greeting', selector: { boolean: {} } }, { name: 'align', selector: choose([['start', 'Left'], ['center', 'Centre'], ['end', 'Right']]) }] },
-    {
-      name: 'chips',
-      selector: {
-        object: {
-          multiple: true,
-          label_field: 'entity',
-          fields: {
-            entity: { label: 'Entity', selector: { entity: {} } },
-            name: { label: 'Name', selector: { text: {} } },
-            icon: { label: 'Icon', selector: { icon: {} } },
-            color: { label: 'Icon colour', selector: { ui_color: { default_color: 'state', include_state: true, include_none: true } } },
-            show_name: { label: 'Show name', selector: { boolean: {} } },
-            show_state: { label: 'Show state', selector: { boolean: {} } },
-            show_icon: { label: 'Show icon', selector: { boolean: {} } },
-            show_entity_picture: { label: 'Show entity picture (people, media)', selector: { boolean: {} } },
-            state_content: {
-              label: 'State shows (pick, or type an attribute such as message)',
-              selector: {
-                select: {
-                  multiple: true,
-                  custom_value: true,
-                  reorder: true,
-                  options: [
-                    { value: 'state', label: 'State' },
-                    { value: 'name', label: 'Name' },
-                    { value: 'last_changed', label: 'Last changed' },
-                    { value: 'last_updated', label: 'Last updated' },
-                  ],
-                },
-              },
-            },
-            badge: { label: 'Count badge (style B)', selector: { boolean: {} } },
-            visibility: { label: 'Visibility conditions (same as Home Assistant badges)', selector: { object: {} } },
-            attention_when: { label: 'Amber when', selector: test },
-            success_when: { label: 'Green when', selector: test },
-            alert_when: { label: 'Red and pulsing when', selector: test },
-            tap_action: { label: 'Tap', selector: { ui_action: {} } },
-            hold_action: { label: 'Hold', selector: { ui_action: {} } },
-            double_tap_action: { label: 'Double tap', selector: { ui_action: {} } },
-          },
-        },
-      },
-    },
     appearanceSection,
     layoutSection,
   ],
-  labels: { style: 'Style', show_greeting: 'Show a greeting and the date', align: 'Align chips', chips: 'Chips' },
-  helpers: {
-    chips: 'Paste Home Assistant badge YAML (type: entity) here too. Visibility uses the same conditions as badges, for example condition: state with state_not: unavailable',
-  },
+  labels: { style: 'Style', show_greeting: 'Show a greeting and the date', align: 'Align chips' },
+  custom: (hass, config, set) =>
+    html`<div class="hv-editor-head">Chips</div>
+      <homeview-chips-editor .hass=${hass} .chips=${(config.chips as Chip[]) ?? []} @chips-changed=${(e: CustomEvent<Chip[]>) => set({ ...config, chips: e.detail })}></homeview-chips-editor>`,
 };
 
 /**

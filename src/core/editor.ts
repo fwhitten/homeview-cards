@@ -1,4 +1,4 @@
-import { LitElement, css, html, nothing } from 'lit';
+import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import { property, state } from 'lit/decorators.js';
 import type { HomeAssistant, LovelaceCardConfig } from './types';
 import { defineElement } from './register';
@@ -12,7 +12,17 @@ export interface EditorSpec {
   schema(config: LovelaceCardConfig, hass?: HomeAssistant): Field[];
   labels?: Record<string, string>;
   helpers?: Record<string, string>;
+  /**
+   * A card-specific editor (a device list, a chip list) drawn between the
+   * card's own fields and the shared Appearance / Interactions / Position
+   * sections. Call `set` with the whole new config.
+   */
+  custom?(hass: HomeAssistant, config: LovelaceCardConfig, set: (config: LovelaceCardConfig) => void): TemplateResult;
 }
+
+/** The shared sections that close every editor, kept below any custom editor. */
+const TAIL_TITLES = new Set(['Appearance', 'Interactions', 'Position on the HomeView view']);
+const isTail = (f: Field): boolean => f.type === 'expandable' && TAIL_TITLES.has(f.title);
 
 const COMMON_LABELS: Record<string, string> = {
   entity: 'Entity',
@@ -136,28 +146,49 @@ export class HomeViewCardEditor extends LitElement {
 
   private helper = (s: Field): string | undefined => this.spec?.helpers?.[s.name] ?? COMMON_HELPERS[s.name];
 
-  private changed(ev: CustomEvent<{ value: LovelaceCardConfig }>): void {
-    ev.stopPropagation();
-    const config = { ...tidy(ev.detail.value), type: this.config!.type } as LovelaceCardConfig;
+  private set = (value: LovelaceCardConfig): void => {
+    const config = { ...tidy(value), type: this.config!.type } as LovelaceCardConfig;
     this.config = config;
     fireEvent(this, 'config-changed', { config });
+  };
+
+  private changed(ev: CustomEvent<{ value: LovelaceCardConfig }>): void {
+    ev.stopPropagation();
+    this.set(ev.detail.value);
+  }
+
+  private form(schema: Field[]) {
+    return schema.length
+      ? html`<ha-form
+          .hass=${this.hass}
+          .data=${this.config}
+          .schema=${schema}
+          .computeLabel=${this.label}
+          .computeHelper=${this.helper}
+          @value-changed=${this.changed}
+        ></ha-form>`
+      : nothing;
   }
 
   render() {
     if (!this.hass || !this.config || !this.spec) return nothing;
-    return html`<ha-form
-      .hass=${this.hass}
-      .data=${this.config}
-      .schema=${this.spec.schema(this.config, this.hass)}
-      .computeLabel=${this.label}
-      .computeHelper=${this.helper}
-      @value-changed=${this.changed}
-    ></ha-form>`;
+    const schema = this.spec.schema(this.config, this.hass);
+    if (!this.spec.custom) return this.form(schema);
+    return html`${this.form(schema.filter((f) => !isTail(f)))}
+      <div class="custom">${this.spec.custom(this.hass, this.config, this.set)}</div>
+      ${this.form(schema.filter(isTail))}`;
   }
 
   static styles = css`
     :host {
       display: block;
+    }
+    .custom {
+      margin: 16px 0;
+    }
+    .hv-editor-head {
+      font-weight: 500;
+      margin-bottom: 8px;
     }
   `;
 }

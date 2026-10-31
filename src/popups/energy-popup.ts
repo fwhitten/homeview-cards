@@ -3,28 +3,30 @@ import { state } from 'lit/decorators.js';
 import { PopupContent } from './popup-base';
 import {
   DEFAULT_THRESHOLDS,
-  DEVICE_COLORS,
   OTHER_COLOR,
+  bucketCount,
   bucketize,
-  consumptionStats,
   energyBetween,
+  energyDevices,
+  fetchPowerSeries,
+  niceMax,
+  totalSignals,
+  totalStats,
   fetchPrefs,
   firstWeekday,
   formatEnergy,
   formatPower,
   gradientStops,
-  powerSignals,
   readTotal,
   startOfDay,
   startOfMonth,
   startOfWeek,
   startOfYear,
-  topLevelDevices,
   type EnergyPrefs,
   type Threshold,
 } from '../core/energy';
-import { fetchHistory, fetchStatistics, resample, samples } from '../core/history';
-import { areaPath, easeSeries, mapPoints, smoothPath } from '../core/chart';
+import { fetchStatistics } from '../core/history';
+import { gappedPaths } from '../core/chart';
 import { time } from '../core/format';
 import { devicesNow } from '../cards/energy-card';
 import { defineElement } from '../core/register';
@@ -44,13 +46,11 @@ interface Breakdown {
   previous?: number;
 }
 
-const POINTS = 90;
-
 /** Energy pop-up: power now with thresholds and distribution, totals so far, and a per-device breakdown. */
 export class HomeViewEnergyPopup extends PopupContent {
   @state() private prefs?: EnergyPrefs;
   @state() private hours = 3;
-  @state() private power: number[] = [];
+  @state() private power: Array<number | null> = [];
   @state() private period: Period = 'day';
   @state() private offset = 0;
   @state() private breakdown?: Breakdown;
@@ -70,8 +70,7 @@ export class HomeViewEnergyPopup extends PopupContent {
   }
 
   private get signals() {
-    if (this.cfg.power_entity) return [{ entity: this.cfg.power_entity as string, sign: 1 as const }];
-    return this.prefs ? powerSignals(this.prefs, this.cfg.total_mode ?? 'home') : [];
+    return this.hass ? totalSignals(this.hass, this.prefs, this.cfg) : [];
   }
 
   protected updated(): void {
@@ -93,16 +92,13 @@ export class HomeViewEnergyPopup extends PopupContent {
   private async loadPower(): Promise<void> {
     const sigs = this.signals;
     if (!sigs.length || !this.hass) return;
-    const hass = this.hass;
-    const hist = await fetchHistory(hass, sigs.map((s) => s.entity), this.hours).catch(() => ({}) as Record<string, never>);
-    const unit = (e: string) => ({ kW: 1000, MW: 1e6 } as Record<string, number>)[hass.states[e]?.attributes.unit_of_measurement] ?? 1;
-    const series = sigs.map((s) => resample(samples(hist[s.entity]), this.hours, POINTS).map((v) => v * s.sign * unit(s.entity)));
-    this.power = series[0] ? series[0].map((_, i) => series.reduce((n, ser) => n + (ser[i] ?? 0), 0)) : [];
+    const width = (this.renderRoot.querySelector('.now') as HTMLElement | null)?.offsetWidth || 640;
+    this.power = await fetchPowerSeries(this.hass, sigs, this.hours, bucketCount(this.hours, this.cfg.points_per_hour, width)).catch(() => []);
   }
 
   private async loadSoFar(): Promise<void> {
     if (!this.prefs || !this.hass) return;
-    const stats = consumptionStats(this.prefs, this.cfg.total_mode ?? 'home');
+    const stats = totalStats(this.hass, this.prefs, this.cfg);
     const now = new Date();
     const fw = firstWeekday(this.hass);
     const day = startOfDay(now);
@@ -172,18 +168,14 @@ export class HomeViewEnergyPopup extends PopupContent {
     const { buckets, start, end, stat, prevStart } = this.buckets();
     const now = new Date();
     const until = end > now ? now : end;
-    const devices = topLevelDevices(this.prefs);
-    const totals = consumptionStats(this.prefs, this.cfg.total_mode ?? 'home');
-    const ids = [...devices.map((d) => d.stat_consumption), ...totals.map((t) => t.id)];
+    // Hidden devices stay in the total and so land in Other; excluded ones leave the total.
+    const devices = energyDevices(hass, this.prefs, this.cfg).filter((d) => !d.hidden && !d.excluded);
+    const totals = totalStats(hass, this.prefs, this.cfg);
+    const ids = [...devices.map((d) => d.stat), ...totals.map((t) => t.id)];
     try {
       const res = await fetchStatistics(hass, ids, start, until, stat, ['change']);
       const totalPer = buckets.map((_, i) => totals.reduce((n, t) => n + t.sign * bucketize(res[t.id], buckets)[i], 0));
-      const series = devices.map((d, k) => ({
-        name: d.name || hass.states[d.stat_consumption]?.attributes.friendly_name || d.stat_consumption,
-        color: DEVICE_COLORS[k % DEVICE_COLORS.length],
-        entity: d.stat_consumption.includes('.') ? d.stat_consumption : d.stat_rate,
-        values: bucketize(res[d.stat_consumption], buckets),
-      }));
+      const series = devices.map((d) => ({ name: d.name, color: d.color, entity: d.icon, values: bucketize(res[d.stat], buckets) }));
       const other = totalPer.map((t, i) => Math.max(0, t - series.reduce((n, s) => n + s.values[i], 0)));
       if (other.some((v) => v > 0.01)) series.push({ name: 'Other', color: OTHER_COLOR, entity: undefined, values: other });
       const total = totalPer.reduce((a, b) => a + b, 0);
@@ -225,6 +217,11 @@ export class HomeViewEnergyPopup extends PopupContent {
     return String(start.getFullYear());
   }
 
+  private get peak(): number | undefined {
+    const vals = this.power.filter((v): v is number => v !== null);
+    return vals.length ? Math.max(...vals) : undefined;
+  }
+
   private icon(entity?: string) {
     const st = entity ? this.hass!.states[entity] : undefined;
     return st ? html`<ha-state-icon .hass=${this.hass} .stateObj=${st}></ha-state-icon>` : html`<ha-icon icon="mdi:power-plug"></ha-icon>`;
@@ -234,8 +231,9 @@ export class HomeViewEnergyPopup extends PopupContent {
     if (this.power.length < 2) return html`<div class="empty sub">No power history yet</div>`;
     const W = 640;
     const H = 132;
-    const max = Math.max(...this.power, 1000) * 1.08;
-    const line = smoothPath(mapPoints(easeSeries(this.power), 0, W, 0, H, 0, max));
+    const peak = this.peak ?? 0;
+    const max = this.cfg.y_max > 0 ? this.cfg.y_max : niceMax(Math.max(peak, 100));
+    const { line, area } = gappedPaths(this.power, 0, W, 0, H, max);
     const stops = gradientStops(this.thresholds, max);
     const step = max / 4;
     return html`<div class="chart">
@@ -243,7 +241,7 @@ export class HomeViewEnergyPopup extends PopupContent {
       ${svg`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Power over the last ${this.hours} hours">
         <defs><linearGradient id="pt" gradientUnits="userSpaceOnUse" x1="0" y1=${H} x2="0" y2="0">${stops.map((s) => svg`<stop offset=${s.offset} stop-color=${s.color}></stop>`)}</linearGradient></defs>
         <path d="M0 33 H${W} M0 66 H${W} M0 99 H${W}" stroke="var(--_track)" stroke-width="1" vector-effect="non-scaling-stroke"></path>
-        <path d=${areaPath(line, W, H)} fill="url(#pt)" fill-opacity=".2"></path>
+        <path d=${area} fill="url(#pt)" fill-opacity=".2"></path>
         <path d=${line} fill="none" stroke="url(#pt)" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>
       </svg>`}
       <div class="xaxis">
@@ -257,8 +255,8 @@ export class HomeViewEnergyPopup extends PopupContent {
     const lang = this.hass.locale.language;
     const watts = readTotal(this.hass, this.signals);
     const p = watts != null ? formatPower(watts, lang) : { value: '—', unit: '' };
-    const peak = this.power.length ? formatPower(Math.max(...this.power), lang) : undefined;
-    const devices = devicesNow(this.hass, this.prefs, watts);
+    const peak = this.peak != null ? formatPower(this.peak, lang) : undefined;
+    const devices = devicesNow(this.hass, this.prefs, watts, this.cfg);
     const devTotal = devices.reduce((n, d) => n + d.watts, 0) || 1;
     const b = this.breakdown;
     const bmax = b ? Math.max(0.01, ...b.buckets.map((_, i) => b.series.reduce((n, s) => n + s.values[i], 0))) * 1.08 : 1;
