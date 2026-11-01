@@ -101,7 +101,8 @@ views:
       light: /local/homeview/wall-day.jpg
     night_entity: sun.sun
     header:
-      greeting: true
+      greeting: true     # "Good morning"
+      date: true         # can be turned off separately
       chips:
         - entity: lock.front_door
           name: Doors locked
@@ -419,6 +420,7 @@ conditions (entity state, number, screen size) built in:
 type: custom:homeview-chips-card
 style: full          # full (A) | compact (B) | glance (C)
 show_greeting: true
+show_date: true
 chips:
   - type: entity
     entity: person.fred
@@ -490,8 +492,16 @@ timer, or the calendar event in progress.
   name: Power Up
   icon: mdi:lightning-bolt
   color: green
-  hide_when: no_events_today      # never | no_events_today | no_events
+  progress_style: fill            # ring (default) or fill: a circle that fills up, with the %
+  hide_when: no_events_within     # never | no_events_today | no_events_within | no_events
+  within: { hours: 6 }            # for no_events_within; days, hours and minutes
 ```
+
+On a calendar the chip counts down in days, hours and minutes: "in 2h 15m"
+until the next event starts, then "1h 20m left" until it ends. `hide_when`
+keeps it out of the way: `no_events_today` shows it only while an event is on
+or still to come today, `no_events_within` only while one is on or starts
+within `within`.
 
 When it finishes (pinned at the maximum, or reaching it) the ring closes in
 its final colour and the chip says Done until its visibility hides it. Tap

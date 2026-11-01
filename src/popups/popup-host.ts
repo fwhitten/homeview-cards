@@ -40,6 +40,34 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
   /** Marks the history entry this opening pushed, so entries left over from a reload aren't mistaken for it. */
   private token = '';
 
+  constructor() {
+    super();
+    this.addEventListener('context-request', this.forwardContext);
+  }
+
+  /**
+   * Home Assistant's own elements in a pop-up (the camera stream, its players)
+   * read the connection and settings through Lit context, which Home
+   * Assistant provides on its <home-assistant> element. This host lives in
+   * document.body, outside that tree, so their requests would go unanswered.
+   * Pass each one on from inside Home Assistant's tree, unchanged: the
+   * provider answers the original element through its callback.
+   */
+  private forwardContext = (ev: Event): void => {
+    const ha = document.querySelector('home-assistant');
+    if (!ha) return;
+    const req = ev as Event & { context: unknown; contextTarget?: Element; callback: unknown; subscribe?: boolean };
+    ev.stopPropagation();
+    const proxy = new Event('context-request', { bubbles: true, composed: true });
+    Object.assign(proxy, {
+      context: req.context,
+      contextTarget: req.contextTarget ?? (ev.composedPath()[0] as Element),
+      callback: req.callback,
+      subscribe: req.subscribe,
+    });
+    (ha.shadowRoot?.firstElementChild ?? ha).dispatchEvent(proxy);
+  };
+
   show(name: string, props: PopupProps): void {
     this.name = name;
     this.props = props;

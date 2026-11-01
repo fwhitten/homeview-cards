@@ -5,7 +5,7 @@
  * given states; with the value shown taken from another entity if set.
  */
 import type { HomeAssistant, HassEntity } from './types';
-import { duration, numericState, time } from './format';
+import { countdown, duration, numericState, time } from './format';
 import { eventsInProgress, nextEventAfter, type CalendarEvent } from './calendar';
 import { themeColor } from './color';
 
@@ -32,9 +32,24 @@ export interface ProgressSource {
   pin_entity?: string;
   pin_states?: string[];
   pin_value?: 'max' | 'min' | number;
-  /** Calendars: when to hide. */
-  hide_when?: 'never' | 'no_events_today' | 'no_events';
+  /**
+   * Calendars: when to hide. `no_events_within` hides unless an event is on
+   * or starts within `within`; `no_events_today` unless one is on or starts
+   * before midnight; `no_events` unless one is coming up in look_ahead_days.
+   */
+  hide_when?: 'never' | 'no_events_today' | 'no_events_within' | 'no_events';
+  /** For no_events_within: how far ahead counts, as Home Assistant's duration ({ days, hours, minutes }). */
+  within?: { days?: number; hours?: number; minutes?: number; seconds?: number };
+  look_ahead_days?: number;
 }
+
+/** A Home Assistant duration in milliseconds. */
+export const durationMs = (d: ProgressSource['within']): number =>
+  (((d?.days ?? 0) * 24 + (d?.hours ?? 0)) * 60 + (d?.minutes ?? 0)) * 60_000 + (d?.seconds ?? 0) * 1000;
+
+/** Days of events to fetch: the look-ahead, stretched to cover the hide window. */
+export const calendarDays = (c: ProgressSource): number =>
+  Math.max(c.look_ahead_days ?? 7, c.hide_when === 'no_events_within' ? Math.ceil(durationMs(c.within) / 86_400_000) + 1 : 1);
 
 export interface ProgressReading {
   /** 0 to 1. */
@@ -48,6 +63,8 @@ export interface ProgressReading {
   done: boolean;
   /** The raw number the thresholds compare against. */
   raw?: number;
+  /** Calendars: counting down to the next event, or to the end of the current one. */
+  phase?: 'before' | 'during';
 }
 
 export interface ProgressContext {
@@ -84,10 +101,14 @@ export const progressReading = (hass: HomeAssistant, c: ProgressSource, ctx: Pro
     if (!ev) {
       const next = nextEventAfter(ctx.events, now);
       const todayEnd = new Date().setHours(24, 0, 0, 0);
-      const hidden = (c.hide_when === 'no_events' && !next) || (c.hide_when === 'no_events_today' && (!next || next.start >= todayEnd));
+      const hidden =
+        (c.hide_when === 'no_events' && !next) ||
+        (c.hide_when === 'no_events_today' && (!next || next.start >= todayEnd)) ||
+        (c.hide_when === 'no_events_within' && (!next || next.start - now > durationMs(c.within)));
       return {
         fraction: 0,
-        value: next ? duration(next.start - now) : '',
+        value: next ? countdown(next.start - now) : '',
+        phase: next ? 'before' : undefined,
         name: next?.summary ?? name,
         sub: next ? `Starts ${time(hass, new Date(next.start))}` : 'Nothing on',
         icon: icon || 'mdi:calendar',
@@ -99,7 +120,7 @@ export const progressReading = (hass: HomeAssistant, c: ProgressSource, ctx: Pro
     const after = nextEventAfter(ctx.events, ev.end - 1);
     const sub =
       after && after.start - ev.end < 3 * 3_600_000 ? `Then ${after.summary} in ${duration(after.start - now)}` : `Ends ${time(hass, new Date(ev.end))}`;
-    return { fraction, value: duration(ev.end - now), name: ev.summary, sub, icon: icon || 'mdi:calendar', done: false };
+    return { fraction, value: countdown(ev.end - now), name: ev.summary, sub, icon: icon || 'mdi:calendar', done: false, phase: 'during' };
   }
 
   if (isTimer(c.entity)) {

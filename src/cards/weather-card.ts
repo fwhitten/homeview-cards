@@ -501,7 +501,12 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
         gap: 6px;
         --mdc-icon-size: 30px;
       }
+      /* A fixed-height row, centred, so a smaller label like Sunset sits on the temperatures' middle. */
       .hour .t {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 26px;
         font-size: 21px;
         font-weight: 600;
         white-space: nowrap;

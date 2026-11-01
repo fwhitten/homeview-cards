@@ -5,7 +5,7 @@ import type { GridOptions, HassEntity } from '../core/types';
 import { isUnavailable } from '../core/format';
 import { eventFromAttributes, fetchCalendarEvents, parseEvents, type CalendarEvent } from '../core/calendar';
 import { inkFor, parseHex, themeHex } from '../core/color';
-import { isCalendar, isTimer, progressColor, progressReading, type ProgressReading, type ProgressSource } from '../core/progress';
+import { calendarDays, isCalendar, isTimer, progressColor, progressReading, type ProgressReading, type ProgressSource } from '../core/progress';
 import { defineElement, registerCard } from '../core/register';
 import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
@@ -69,7 +69,8 @@ const EDITOR: EditorSpec = {
       ...(kind === 'timer' ? [{ name: 'secondary_entities', selector: { entity: { multiple: true } } }] : []),
       ...(kind === 'calendar'
         ? [
-            { name: 'hide_when', selector: choose([['never', 'Never hide'], ['no_events_today', 'Hide when nothing is left today'], ['no_events', 'Hide when nothing is coming up']]) },
+            { name: 'hide_when', selector: choose([['never', 'Never hide'], ['no_events_today', 'Show only on days with an event'], ['no_events_within', 'Show only when an event is close'], ['no_events', 'Hide when nothing is coming up']]) },
+            ...(c.hide_when === 'no_events_within' ? [{ name: 'within', selector: { duration: { enable_day: true } } }] : []),
             { type: 'grid', name: '', schema: [{ name: 'include_all_day', selector: { boolean: {} } }, { name: 'look_ahead_days', selector: { number: { min: 1, max: 60, mode: 'box', unit_of_measurement: 'days' } } }] },
             { name: 'cycle_interval', selector: { number: { min: 3, max: 60, mode: 'box', unit_of_measurement: 's' } } },
           ]
@@ -90,6 +91,7 @@ const EDITOR: EditorSpec = {
     pin_states: '…is in one of these states',
     pin_value: 'Pin to (max, min or a number)',
     hide_when: 'Hide the card',
+    within: 'Show from this long before an event',
     include_all_day: 'Include all-day events',
     look_ahead_days: 'Look ahead',
     cycle_interval: 'Switch between overlapping events every',
@@ -160,7 +162,7 @@ export class HomeViewProgressCard extends HomeViewCard<ProgressCardConfig> {
     const key = `${this.config.entity}|${st?.last_changed}`;
     if (key !== this.fetchedFor) {
       this.fetchedFor = key;
-      fetchCalendarEvents(this.hass as never, this.config.entity, this.config.look_ahead_days ?? 7)
+      fetchCalendarEvents(this.hass as never, this.config.entity, calendarDays(this.config))
         .then((raw) => (this.events = parseEvents(raw, !!this.config.include_all_day)))
         .catch(() => {
           const ev = st ? eventFromAttributes(st.attributes, !!this.config.include_all_day) : undefined;

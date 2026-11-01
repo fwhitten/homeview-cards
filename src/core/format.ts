@@ -72,6 +72,17 @@ export const duration = (ms: number): string => {
   return `${s}s`;
 };
 
+/** A countdown to the minute: "2d 4h", "3h 12m", "12m". Rounds up, so it reaches 0m only at the moment itself. */
+export const countdown = (ms: number): string => {
+  const total = Math.max(0, Math.ceil(ms / 60_000));
+  const d = Math.floor(total / 1440);
+  const h = Math.floor((total % 1440) / 60);
+  const m = total % 60;
+  if (d) return h ? `${d}d ${h}h` : `${d}d`;
+  if (h) return `${h}h ${m}m`;
+  return `${m}m`;
+};
+
 export const entityName = (st: HassEntity | undefined, override?: string): string => {
   if (override) return override;
   if (!st) return '';

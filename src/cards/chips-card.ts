@@ -1,5 +1,6 @@
 import { css, html, nothing, svg, type PropertyValues } from 'lit';
 import { state } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 import { HomeViewCard, type BaseCardConfig } from '../core/base-card';
 import type { ActionConfig, GridOptions, HassEntity } from '../core/types';
 import { passes, type StateTest } from '../core/condition';
@@ -8,7 +9,7 @@ import { themeColor } from '../core/color';
 import type { ConditionConfig } from '../notifications/types';
 import { greeting, longDate } from '../core/format';
 import { eventFromAttributes, fetchCalendarEvents, parseEvents, type CalendarEvent } from '../core/calendar';
-import { isCalendar, isTimer, progressColor, progressReading, type ProgressReading, type ProgressSource } from '../core/progress';
+import { calendarDays, isCalendar, isTimer, progressColor, progressReading, type ProgressReading, type ProgressSource } from '../core/progress';
 import { runAction } from '../core/actions';
 import { defineElement, registerCard } from '../core/register';
 import { appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
@@ -21,6 +22,8 @@ import './chips-editor';
 export interface Chip extends Omit<ProgressSource, 'entity' | 'name' | 'icon' | 'color'> {
   /** `entity` (the default) or `progress`: a ring around the icon, with ha-progress-card's options. */
   type?: string;
+  /** Progress chips: a ring around the icon, or a circle that fills from the bottom with the percentage in it. */
+  progress_style?: 'ring' | 'fill';
   entity?: string;
   /** The name to show, or (with neither show_name nor show_state set) the whole label, where {state} is replaced. */
   name?: string;
@@ -44,9 +47,8 @@ export interface Chip extends Omit<ProgressSource, 'entity' | 'name' | 'icon' | 
   tap_action?: ActionConfig;
   hold_action?: ActionConfig;
   double_tap_action?: ActionConfig;
-  /** Progress chips on a calendar: count all-day events, and how far ahead to look. */
+  /** Progress chips on a calendar: count all-day events. */
   include_all_day?: boolean;
-  look_ahead_days?: number;
 }
 
 const isProgress = (c: Chip): boolean => c.type === 'progress';
@@ -56,6 +58,8 @@ export interface ChipsCardConfig extends BaseCardConfig {
   style?: 'full' | 'compact' | 'glance';
   /** Greeting and date on the left, for use as a dashboard header. */
   show_greeting?: boolean;
+  /** The date beside (or instead of) the greeting. Defaults to follow show_greeting. */
+  show_date?: boolean;
   align?: 'start' | 'end' | 'center';
   chips: Chip[];
 }
@@ -84,11 +88,12 @@ const ACTIVE_STATES = ['on', 'open', 'unlocked', 'heat', 'heating', 'cleaning', 
 const EDITOR: EditorSpec = {
   schema: () => [
     { name: 'style', selector: choose([['full', 'A: chips'], ['compact', 'B: icons with badges'], ['glance', 'C: big glance chips']], 'list') },
-    { type: 'grid', name: '', schema: [{ name: 'show_greeting', selector: { boolean: {} } }, { name: 'align', selector: choose([['start', 'Left'], ['center', 'Centre'], ['end', 'Right']]) }] },
+    { type: 'grid', name: '', schema: [{ name: 'show_greeting', selector: { boolean: {} } }, { name: 'show_date', selector: { boolean: {} } }] },
+    { name: 'align', selector: choose([['start', 'Left'], ['center', 'Centre'], ['end', 'Right']]) },
     appearanceSection,
     layoutSection,
   ],
-  labels: { style: 'Style', show_greeting: 'Show a greeting and the date', align: 'Align chips' },
+  labels: { style: 'Style', show_greeting: 'Greeting', show_date: 'Date', align: 'Align chips' },
   custom: (hass, config, set) =>
     html`<div class="hv-editor-head">Chips</div>
       <homeview-chips-editor .hass=${hass} .chips=${(config.chips as Chip[]) ?? []} @chips-changed=${(e: CustomEvent<Chip[]>) => set({ ...config, chips: e.detail })}></homeview-chips-editor>`,
@@ -152,7 +157,7 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
 
   connectedCallback(): void {
     super.connectedCallback();
-    if (this.config?.show_greeting) this.timer = window.setInterval(() => (this.now = new Date()), 60_000);
+    if (this.config?.show_greeting || this.config?.show_date) this.timer = window.setInterval(() => (this.now = new Date()), 60_000);
     // Calendar and timer progress counts down by the second; nothing else needs a clock.
     this.ticker = window.setInterval(() => {
       const live = this.config?.chips.some((c) => isProgress(c) && c.entity && (isCalendar(c.entity) || (isTimer(c.entity) && this.hass?.states[c.entity]?.state === 'active')));
@@ -179,7 +184,7 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
       if (this.fetched[c.entity] === key) continue;
       this.fetched[c.entity] = key;
       const entity = c.entity;
-      fetchCalendarEvents(this.hass as never, entity, c.look_ahead_days ?? 7)
+      fetchCalendarEvents(this.hass as never, entity, calendarDays(c as ProgressSource))
         .then((raw) => (this.calendars = { ...this.calendars, [entity]: parseEvents(raw, !!c.include_all_day) }))
         .catch(() => {
           const ev = st ? eventFromAttributes(st.attributes, !!c.include_all_day) : undefined;
@@ -308,7 +313,7 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
   private ringVisual(c: Chip, st: HassEntity | undefined, r: ProgressReading) {
     const color = progressColor(c as ProgressSource, r);
     const icon = c.icon || r.icon;
-    const R = 16.5;
+    const R = 15.5;
     const C = 2 * Math.PI * R;
     return html`<i class="ring" style="color:${color}">
       ${svg`<svg viewBox="0 0 36 36" aria-hidden="true">
@@ -319,10 +324,36 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
     </i>`;
   }
 
-  private visual(c: Chip, st: HassEntity | undefined, level: Level) {
+  /**
+   * A circle that fills from the bottom like a glass, with the percentage in
+   * bold. The figure is drawn twice: light over the empty part, dark over
+   * the fill, so it reads at any level.
+   */
+  private fillVisual(c: Chip, r: ProgressReading, idx: number) {
+    const color = progressColor(c as ProgressSource, r);
+    const pct = `${Math.round(r.fraction * 100)}%`;
+    const top = (36 * (1 - r.fraction)).toFixed(2);
+    const size = pct.length > 3 ? 10.5 : 12.5;
+    return html`<i class="fillc" role="img" aria-label=${pct}>
+      ${svg`<svg viewBox="0 0 36 36" aria-hidden="true">
+        <defs>
+          <clipPath id="fc${idx}"><circle cx="18" cy="18" r="18"></circle></clipPath>
+          <clipPath id="fl${idx}"><rect x="0" y=${top} width="36" height="36"></rect></clipPath>
+        </defs>
+        <g clip-path="url(#fc${idx})">
+          <rect width="36" height="36" class="empty"></rect>
+          <rect x="0" y=${top} width="36" height="36" class="level" style="fill:${color}"></rect>
+        </g>
+        <text x="18" y="18.5" class="pv" style="font-size:${size}px">${pct}</text>
+        <text x="18" y="18.5" class="pv over" style="font-size:${size}px" clip-path="url(#fl${idx})">${pct}</text>
+      </svg>`}
+    </i>`;
+  }
+
+  private visual(c: Chip, st: HassEntity | undefined, level: Level, idx = 0) {
     const filled = level !== 'calm' ? LEVEL[level] : undefined;
     const r = this.progress(c);
-    if (r) return this.ringVisual(c, st, r);
+    if (r) return c.progress_style === 'fill' ? this.fillVisual(c, r, idx) : this.ringVisual(c, st, r);
     const picture = c.show_entity_picture && st?.attributes.entity_picture ? this.hass!.hassUrl(st.attributes.entity_picture) : undefined;
     if (picture) return html`<i class="pic" style="background-image:url('${picture}')"></i>`;
     if (c.show_icon === false) return nothing;
@@ -341,20 +372,24 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
     const style = this.config.style ?? 'full';
     const filled = level !== 'calm' ? LEVEL[level] : undefined;
     const r = this.progress(c);
+    const progressValue = r ? (r.done ? 'Done' : r.phase === 'before' ? `in ${r.value}` : r.phase === 'during' ? `${r.value} left` : r.value) : '';
     const [nameLine, stateLine] = r
-      ? [c.show_name === false ? '' : r.name, c.show_state === false ? '' : r.done ? 'Done' : r.value]
+      ? [c.show_name === false ? '' : (typeof c.name === 'string' && c.name) || r.name, c.show_state === false ? '' : progressValue]
       : this.lines(c, st);
-    const label = [nameLine, stateLine, r && !r.done ? `${Math.round(r.fraction * 100)}%` : ''].filter(Boolean).join(' · ');
+    const pct = r && !r.done && !stateLine.endsWith('%') ? `${Math.round(r.fraction * 100)}%` : '';
+    const label = [nameLine, stateLine, pct].filter(Boolean).join(' · ');
     const handlers = { down: this.down(c), click: this.onClick(c, i) };
+    // The alarm pulses on its own layer, which is removed outright when the alert ends, so no animation can outlive it.
+    const alarm = level === 'alert' ? html`<span class="alarm" aria-hidden="true"></span>` : nothing;
     if (style === 'compact' && this.expanded !== i) {
       const n = c.badge && st ? Number(st.state) : NaN;
-      return html`<button class="dotc ${filled ? '' : 'gl'} ${level === 'alert' ? 'pulse' : ''}" aria-label=${label} style=${filled ? `background:${filled.bg};color:${filled.ink}` : ''} @pointerdown=${handlers.down} @click=${handlers.click}>
-        ${this.visual(c, st, level)}${Number.isFinite(n) && n > 0 ? html`<em style="background:${filled ? filled.ink : this.iconColor(c, st) ?? 'var(--hv-c-progress)'};color:${filled ? filled.bg : '#fff'}">${n}</em>` : nothing}
+      return html`<button class="dotc ${filled ? '' : 'gl'}" aria-label=${label} style=${filled ? `background:${filled.bg};color:${filled.ink}` : ''} @pointerdown=${handlers.down} @click=${handlers.click}>
+        ${alarm}${this.visual(c, st, level, i)}${Number.isFinite(n) && n > 0 ? html`<em style="background:${filled ? filled.ink : this.iconColor(c, st) ?? 'var(--hv-c-progress)'};color:${filled ? filled.bg : '#fff'}">${n}</em>` : nothing}
       </button>`;
     }
     const two = !!nameLine && !!stateLine;
-    return html`<button class="chip ${style === 'glance' ? 'big' : ''} ${filled ? '' : 'gl'} ${level === 'alert' ? 'pulse' : ''} ${two ? 'two' : ''}" aria-label=${label} style=${filled ? `background:${filled.bg};color:${filled.ink}` : ''} @pointerdown=${handlers.down} @click=${handlers.click}>
-      ${this.visual(c, st, level)}
+    return html`<button class="chip ${style === 'glance' ? 'big' : ''} ${filled ? '' : 'gl'} ${two ? 'two' : ''}" aria-label=${label} style=${filled ? `background:${filled.bg};color:${filled.ink}` : ''} @pointerdown=${handlers.down} @click=${handlers.click}>
+      ${alarm}${this.visual(c, st, level, i)}
       ${two
         ? html`<span class="lines"><small>${nameLine}</small><b>${stateLine}</b></span>`
         : html`<b>${nameLine || stateLine}</b>`}
@@ -364,10 +399,15 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
   render() {
     if (!this.hass) return nothing;
     const chips = this.config.chips.map((c, i) => ({ c, i })).filter(({ c }) => this.visible(c));
-    const row = html`<div class="row ${this.config.align}">${chips.map(({ c, i }) => this.chip(c, i))}</div>`;
-    if (!this.config.show_greeting) return row;
+    // Keyed by each chip's place in the config, so a chip keeps its own element as others appear and disappear.
+    const row = html`<div class="row ${this.config.align}">${repeat(chips, ({ i }) => i, ({ c, i }) => this.chip(c, i))}</div>`;
+    const showGreeting = !!this.config.show_greeting;
+    const showDate = this.config.show_date ?? showGreeting;
+    if (!showGreeting && !showDate) return row;
     return html`<div class="header">
-      <div class="greet"><h1>${greeting(this.now)}</h1><span>${longDate(this.hass, this.now)}</span></div>
+      <div class="greet">${showGreeting ? html`<h1>${greeting(this.now)}</h1>` : nothing}${showDate
+          ? html`<span class=${showGreeting ? '' : 'alone'}>${longDate(this.hass, this.now)}</span>`
+          : nothing}</div>
       ${row}
     </div>`;
   }
@@ -410,6 +450,13 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
         font-size: 21px;
         font-weight: 500;
         color: var(--_ink2);
+      }
+      /* The date on its own takes the greeting's place and size. */
+      .greet span.alone {
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: var(--_ink);
       }
       .row {
         display: flex;
@@ -483,7 +530,7 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
       }
       i.ring circle {
         fill: none;
-        stroke-width: 3;
+        stroke-width: 4.5;
       }
       i.ring .track {
         stroke: var(--_track);
@@ -491,6 +538,34 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
       i.ring .arc {
         stroke-linecap: round;
         transition: stroke-dasharray 0.6s ease;
+      }
+      .chip i.fillc,
+      .dotc i.fillc {
+        position: relative;
+        background: none;
+      }
+      i.fillc svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+      }
+      i.fillc .empty {
+        fill: var(--_track);
+      }
+      i.fillc .level {
+        transition: y 0.6s ease;
+      }
+      i.fillc .pv {
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        text-anchor: middle;
+        dominant-baseline: central;
+        fill: var(--_ink);
+      }
+      i.fillc .pv.over {
+        fill: #17151f;
       }
       .lines {
         display: flex;
@@ -543,17 +618,29 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
         justify-content: center;
         z-index: 6;
       }
-      .pulse {
-        animation: pulse 1.4s ease-in-out infinite;
+      /* Alerting: a light wash breathes over the red chip; the text and icon stay steady above it. */
+      .alarm {
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: rgba(255, 255, 255, 0.3);
+        opacity: 0;
+        pointer-events: none;
+        animation: alarm 1.4s ease-in-out infinite;
       }
-      @keyframes pulse {
+      .chip > :not(.alarm):not(em),
+      .dotc > :not(.alarm):not(em) {
+        position: relative;
+      }
+      @keyframes alarm {
         50% {
-          opacity: 0.55;
+          opacity: 1;
         }
       }
       @media (prefers-reduced-motion: reduce) {
-        .pulse {
+        .alarm {
           animation: none;
+          opacity: 0.5;
         }
       }
     `,

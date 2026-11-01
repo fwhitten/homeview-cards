@@ -207,13 +207,13 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
 
     // The target lives in the stepper, so the status only says what the system is doing.
     const short = off ? 'Off' : style ? style.verb.replace(/ to$/, '') : 'Idle';
-    const stepperH = html`<div class="stepper-h gl">
+    const stepperH = html`<div class="stepper-h gl corner-tr">
       ${minus}
       <div class="tgt" aria-label="Target ${tgtText}"><div class="tv" style="color:${this.pendingTarget != null ? 'var(--_heat-ink)' : 'inherit'}">${tgtText || '—'}</div></div>
       ${plus}
     </div>`;
     const header = html`
-      <div class="head">
+      <div class="head corner-tl">
         <span class="round badge ${style && !off ? '' : 'gl'}" style="background:${iconBg};color:${style && !off ? '#fff' : 'var(--_ink2)'}"><ha-icon .icon=${icon}></ha-icon></span>
         <div class="text">
           <div class="name">${name}</div>
@@ -256,7 +256,7 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
         <ha-card class="tile clickable small" tabindex="0" role="button" aria-label="${name}, ${heroText}, ${status}">
           ${this.graph(203, 56, 2.5)}
           <div class="pad">
-            <div class="head">
+            <div class="head corner-tl">
               <span class="round badge sm ${style && !off ? '' : 'gl'}" style="background:${iconBg};color:${style && !off ? '#fff' : 'var(--_ink2)'}"><ha-icon .icon=${icon}></ha-icon></span>
               <div class="name">${name}</div>
             </div>
@@ -312,15 +312,18 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
         min-width: 0;
       }
       .badge {
-        width: 40px;
-        height: 40px;
+        width: 44px;
+        height: 44px;
         cursor: default;
-        --mdc-icon-size: 22px;
+        --mdc-icon-size: 24px;
       }
       .badge.sm {
-        width: 38px;
-        height: 38px;
-        --mdc-icon-size: 20px;
+        width: 40px;
+        height: 40px;
+        --mdc-icon-size: 22px;
+      }
+      .head:has(.badge.sm) {
+        --_cd: 40px;
       }
       .status {
         font-weight: 600;
@@ -328,7 +331,7 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
       .row {
         display: flex;
         justify-content: space-between;
-        align-items: center;
+        align-items: flex-start;
         gap: 12px;
       }
       .steps {
@@ -367,10 +370,11 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
         padding: 4px;
         border-radius: 999px;
         flex: none;
+        --_cd: 48px;
       }
       .stepper-h .step {
-        width: 44px;
-        height: 44px;
+        width: 40px;
+        height: 40px;
         background: none;
       }
       .stepper-h .step::after {

@@ -107,7 +107,7 @@ export const base = css`
     overflow: hidden;
     box-sizing: border-box;
     height: 100%;
-    min-height: 0;
+    min-height: var(--hv-tile-min-height, var(--_auto-min, 0px));
     border: none;
     border-radius: var(--_radius);
     background: radial-gradient(130% 80% at 0% 0%, var(--_sheen), rgba(255, 255, 255, 0) 52%), var(--_glass);
@@ -209,6 +209,22 @@ export const base = css`
     font-size: 20px;
     font-weight: 600;
     color: var(--_ink2);
+  }
+  /*
+   * Concentric corners: a round control in a tile's corner sits with its
+   * centre on the centre of the corner's curve, so the gap to the rounded
+   * edge is even all the way round. --_cd is the circle's diameter;
+   * containers say their padding with --_pt / --_pl / --_pr.
+   */
+  .corner-tl,
+  .corner-tr {
+    margin-top: calc(var(--_radius) - var(--_cd, 44px) / 2 - var(--_pt, 18px));
+  }
+  .corner-tl {
+    margin-left: calc(var(--_radius) - var(--_cd, 44px) / 2 - var(--_pl, 20px));
+  }
+  .corner-tr {
+    margin-right: calc(var(--_radius) - var(--_cd, 44px) / 2 - var(--_pr, 20px));
   }
   .round {
     display: inline-flex;

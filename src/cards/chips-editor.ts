@@ -96,6 +96,7 @@ const progressSchema = (c: Chip): Field[] => {
   return [
     { name: 'entity', selector: { entity: {} } },
     { type: 'grid', name: '', schema: [{ name: 'name', selector: { text: {} } }, { name: 'icon', selector: { icon: {} }, context: { icon_entity: 'entity' } }] },
+    { name: 'progress_style', selector: { select: { mode: 'list', options: [{ value: 'ring', label: 'Ring around the icon' }, { value: 'fill', label: 'Circle that fills, with the %' }] } } },
     { type: 'grid', name: '', schema: [{ name: 'show_name', selector: { boolean: {} } }, { name: 'show_state', selector: { boolean: {} } }] },
     ...(numeric
       ? [
@@ -134,7 +135,21 @@ const progressSchema = (c: Chip): Field[] => {
       : []),
     ...(calendar
       ? [
-          { name: 'hide_when', selector: { select: { mode: 'dropdown', options: [{ value: 'never', label: 'Never' }, { value: 'no_events_today', label: 'Nothing left today' }, { value: 'no_events', label: 'Nothing coming up' }] } } },
+          {
+            name: 'hide_when',
+            selector: {
+              select: {
+                mode: 'dropdown',
+                options: [
+                  { value: 'never', label: 'Always' },
+                  { value: 'no_events_today', label: 'When an event is on or left today' },
+                  { value: 'no_events_within', label: 'When an event is on or starts within…' },
+                  { value: 'no_events', label: 'When any event is coming up' },
+                ],
+              },
+            },
+          },
+          ...(c.hide_when === 'no_events_within' ? [{ name: 'within', selector: { duration: { enable_day: true } } }] : []),
           { type: 'grid', name: '', schema: [{ name: 'include_all_day', selector: { boolean: {} } }, { name: 'look_ahead_days', selector: { number: { min: 1, max: 31, mode: 'box' } } }] },
         ]
       : []),
@@ -153,6 +168,7 @@ const progressSchema = (c: Chip): Field[] => {
 };
 
 const LABELS: Record<string, string> = {
+  progress_style: 'Design',
   min: 'Minimum',
   max: 'Maximum',
   value_entity: 'Show this entity as the value (e.g. time remaining)',
@@ -160,7 +176,8 @@ const LABELS: Record<string, string> = {
   pin_entity: 'Status entity',
   pin_states: 'In any of these states',
   pin_value: 'Hold the ring at',
-  hide_when: 'Hide the chip when there is',
+  hide_when: 'Show the chip',
+  within: 'Starts within',
   include_all_day: 'Include all-day events',
   look_ahead_days: 'Look ahead (days)',
   entity: 'Entity',

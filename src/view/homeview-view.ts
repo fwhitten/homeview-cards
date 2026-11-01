@@ -22,7 +22,7 @@ export interface HomeViewViewConfig {
   rows?: number | 'auto';
   /** How many screens to swipe between, at least. Cards that don't fit add more. */
   screens?: number;
-  header?: { greeting?: boolean; style?: 'full' | 'compact'; chips?: Chip[] };
+  header?: { greeting?: boolean; date?: boolean; style?: 'full' | 'compact'; chips?: Chip[] };
   ambient?: Omit<AmbientConfig, 'type'>;
   /** Same options as the HomeView notifications card. */
   notifications?: Record<string, unknown>;
@@ -159,7 +159,7 @@ export class HomeViewView extends LitElement {
   setConfig(config: HomeViewViewConfig): void {
     this.config = { ...config };
     store.setSettings({ appearance: config.appearance, night_entity: config.night_entity });
-    this.header = this.helper('homeview-chips-card', config.header ? { style: config.header.style ?? 'full', show_greeting: config.header.greeting ?? true, chips: config.header.chips ?? [] } : undefined, this.header);
+    this.header = this.helper('homeview-chips-card', config.header ? { style: config.header.style ?? 'full', show_greeting: config.header.greeting ?? true, show_date: config.header.date ?? true, chips: config.header.chips ?? [] } : undefined, this.header);
     this.ambient = this.helper('homeview-ambient-card', config.ambient, this.ambient);
     this.notifier = this.helper('homeview-notification-card', config.notifications, this.notifier);
   }
@@ -571,7 +571,7 @@ export class HomeViewView extends LitElement {
 
   private openHeader(): void {
     const h = this.config.header;
-    this.draft = { enabled: !!h, greeting: h?.greeting ?? true, style: h?.style ?? 'full', chips: h?.chips ?? [] };
+    this.draft = { enabled: !!h, greeting: h?.greeting ?? true, date: h?.date ?? true, style: h?.style ?? 'full', chips: h?.chips ?? [] };
     this.sheet = 'header';
   }
 
@@ -598,7 +598,7 @@ export class HomeViewView extends LitElement {
     } else if (sheet === 'header') {
       void this.save((view) => {
         if (!d.enabled) delete view.header;
-        else view.header = { greeting: d.greeting, style: d.style, chips: d.chips };
+        else view.header = { greeting: d.greeting, date: d.date, style: d.style, chips: d.chips };
       });
     }
     this.closeSheet();
@@ -711,7 +711,11 @@ export class HomeViewView extends LitElement {
       ${d.enabled
         ? html`<label class="switch-row">
               <input type="checkbox" .checked=${!!d.greeting} @change=${(e: Event) => set({ greeting: (e.target as HTMLInputElement).checked })} />
-              <span>Greeting and date</span>
+              <span>Greeting</span>
+            </label>
+            <label class="switch-row">
+              <input type="checkbox" .checked=${!!d.date} @change=${(e: Event) => set({ date: (e.target as HTMLInputElement).checked })} />
+              <span>Date</span>
             </label>
             <div class="field">
               <span>Chips</span>
@@ -906,8 +910,10 @@ export class HomeViewView extends LitElement {
       min-width: 0;
       min-height: 0;
     }
+    /* The view sizes every card itself, so cards' own fallback heights don't apply. */
     .cell {
       height: 100%;
+      --hv-tile-min-height: 0px;
     }
     .cell > * {
       display: block;

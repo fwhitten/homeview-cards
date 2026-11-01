@@ -46,6 +46,8 @@ export abstract class HomeViewCard<C extends BaseCardConfig = BaseCardConfig> ex
   @property({ reflect: true }) size: TileSize = 's';
   @state() protected config!: C;
   private resizer?: ResizeObserver;
+  /** Recent size changes, to stop layout and size chasing each other. */
+  private flips: number[] = [];
 
   protected gestures = new GestureController(this, () => this.gestureHandlers());
   private unsubSettings?: () => void;
@@ -54,6 +56,7 @@ export abstract class HomeViewCard<C extends BaseCardConfig = BaseCardConfig> ex
     if (!config) throw new Error('Invalid configuration');
     this.validate(config);
     this.config = { ...this.defaults(), ...config };
+    this.setAutoHeight();
   }
 
   /** Throw an Error to show HA's red config-error card. */
@@ -71,11 +74,39 @@ export abstract class HomeViewCard<C extends BaseCardConfig = BaseCardConfig> ex
   connectedCallback(): void {
     super.connectedCallback();
     this.unsubSettings = store.subscribe('settings', () => this.requestUpdate());
-    this.resizer = new ResizeObserver(([entry]) => {
-      const { width, height } = entry.contentRect;
-      if (width && height) this.size = sizeFor(width, height);
-    });
+    this.resizer = new ResizeObserver(([entry]) => this.resize(entry.contentRect.width, entry.contentRect.height));
     this.resizer.observe(this);
+    this.setAutoHeight();
+  }
+
+  /**
+   * Where nothing gives the card a height (the card editor's preview, a
+   * masonry dashboard), a tile would collapse around its content. Give it the
+   * height of its smallest grid size instead. The HomeView view and sections
+   * grids size cards themselves; the view turns this off with
+   * --hv-tile-min-height.
+   */
+  private setAutoHeight(): void {
+    const opts = this.getGridOptions();
+    const rows = typeof opts.min_rows === 'number' ? opts.min_rows : typeof opts.rows === 'number' ? opts.rows : 2;
+    this.style.setProperty('--_auto-min', `${rows * 56 + (rows - 1) * 8}px`);
+  }
+
+  /**
+   * Pick the tile layout from the rendered size. Where the card's height
+   * comes from its own content, a new layout can change that height and so
+   * the size again; after a few quick flips it holds still rather than loop
+   * (which froze the tab in the card editor).
+   */
+  private resize(width: number, height: number): void {
+    if (!width || !height) return;
+    const size = sizeFor(width, height);
+    if (size === this.size) return;
+    const now = performance.now();
+    this.flips = this.flips.filter((t) => now - t < 2000);
+    if (this.flips.length >= 4) return;
+    this.flips.push(now);
+    this.size = size;
   }
 
   disconnectedCallback(): void {
@@ -109,10 +140,7 @@ export abstract class HomeViewCard<C extends BaseCardConfig = BaseCardConfig> ex
     super.updated(changed);
     // Size once from layout too: ResizeObserver can be late (or paused in a hidden tab).
     const box = this.getBoundingClientRect();
-    if (box.width && box.height) {
-      const size = sizeFor(box.width, box.height);
-      if (size !== this.size) this.size = size;
-    }
+    this.resize(box.width, box.height);
     this.gestures.attach(this.renderRoot.querySelector<HTMLElement>('ha-card.tile'));
   }
 

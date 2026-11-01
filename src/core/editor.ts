@@ -148,6 +148,8 @@ export class HomeViewCardEditor extends LitElement {
 
   private set = (value: LovelaceCardConfig): void => {
     const config = { ...tidy(value), type: this.config!.type } as LovelaceCardConfig;
+    // Only report real changes: echoing an unchanged config back can set off a loop with the dashboard editor.
+    if (JSON.stringify(config) === JSON.stringify(this.config)) return;
     this.config = config;
     fireEvent(this, 'config-changed', { config });
   };
