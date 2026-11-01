@@ -3,6 +3,7 @@ import { state } from 'lit/decorators.js';
 import { HomeViewCard, type BaseCardConfig } from '../core/base-card';
 import type { GridOptions, HomeAssistant } from '../core/types';
 import { gappedPaths } from '../core/chart';
+import { SizeController } from '../core/measure';
 import {
   DEFAULT_THRESHOLDS,
   OTHER_COLOR,
@@ -154,6 +155,7 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
   private refresh?: number;
   private sparkEnd = Date.now();
   private gradientId = `hvpw${Math.random().toString(36).slice(2, 8)}`;
+  private plotSize = new SizeController(this, '.plot');
 
   static getConfigElement() {
     return editorFor(EDITOR);
@@ -304,25 +306,30 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
 
   // ---------------------------------------------------------------- A: power
 
+  /**
+   * The power line, drawn at the plot's real size so the threshold colours
+   * sit at the right heights on every screen.
+   */
   private sparkline(labels: boolean) {
-    if (this.spark.length < 2) return html`<div class="plot"></div>`;
-    const W = 1000;
+    const { width: W, height: H } = this.plotSize;
+    if (this.spark.length < 2 || !W || !H) return html`<div class="plot"></div>`;
     // With time labels the fill carries on beneath them while the line stays clear above.
-    const H = labels ? 122 : 100;
+    const base = labels ? H - 30 : H - 1;
+    const top = 3;
     const thresholds = this.config.thresholds?.length ? this.config.thresholds : DEFAULT_THRESHOLDS;
     const max = this.config.y_max && this.config.y_max > 0 ? this.config.y_max : niceMax(Math.max(this.peak ?? 0, 100), 2);
-    const { line, area: fill } = gappedPaths(this.spark, 0, W, 3, 100, max, H);
+    const { line, area: fill } = gappedPaths(this.spark, 0, W, top, base, max, H);
     const stops = gradientStops(thresholds, max);
     const id = this.gradientId;
     const hours = this.config.hours ?? 3;
     const marks = this.size === 'l' ? [0, 1 / 3, 2 / 3] : [0];
     return html`<div class="plot">
-      ${svg`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
-        <defs><linearGradient id=${id} gradientUnits="userSpaceOnUse" x1="0" y1="100" x2="0" y2="0">
+      ${svg`<svg viewBox="0 0 ${W} ${H}" aria-hidden="true">
+        <defs><linearGradient id=${id} gradientUnits="userSpaceOnUse" x1="0" y1=${base} x2="0" y2=${top}>
           ${stops.map((s) => svg`<stop offset=${s.offset} stop-color=${s.color}></stop>`)}
         </linearGradient></defs>
         <path d=${fill} fill="url(#${id})" fill-opacity=".22"></path>
-        <path d=${line} fill="none" stroke="url(#${id})" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>
+        <path d=${line} fill="none" stroke="url(#${id})" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></path>
       </svg>`}
       ${labels
         ? html`<div class="tlab">${marks.map((f) => html`<span>${time(this.hass, new Date(this.sparkEnd - (1 - f) * hours * 3_600_000))}</span>`)}<span>Now</span></div>`

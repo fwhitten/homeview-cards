@@ -1,11 +1,14 @@
-import { css, html, nothing } from 'lit';
+import { css, html, nothing, svg, type PropertyValues } from 'lit';
 import { state } from 'lit/decorators.js';
 import { HomeViewCard, type BaseCardConfig } from '../core/base-card';
 import type { ActionConfig, GridOptions, HassEntity } from '../core/types';
 import { passes, type StateTest } from '../core/condition';
 import { checkCondition } from '../notifications/conditions';
+import { themeColor } from '../core/color';
 import type { ConditionConfig } from '../notifications/types';
 import { greeting, longDate } from '../core/format';
+import { eventFromAttributes, fetchCalendarEvents, parseEvents, type CalendarEvent } from '../core/calendar';
+import { isCalendar, isTimer, progressColor, progressReading, type ProgressReading, type ProgressSource } from '../core/progress';
 import { runAction } from '../core/actions';
 import { defineElement, registerCard } from '../core/register';
 import { appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
@@ -15,7 +18,8 @@ import './chips-editor';
  * One chip. Accepts Home Assistant's own badge options (show_name, show_state,
  * show_icon, show_entity_picture, visibility), so badge YAML can be pasted in.
  */
-export interface Chip {
+export interface Chip extends Omit<ProgressSource, 'entity' | 'name' | 'icon' | 'color'> {
+  /** `entity` (the default) or `progress`: a ring around the icon, with ha-progress-card's options. */
   type?: string;
   entity?: string;
   /** The name to show, or (with neither show_name nor show_state set) the whole label, where {state} is replaced. */
@@ -40,7 +44,12 @@ export interface Chip {
   tap_action?: ActionConfig;
   hold_action?: ActionConfig;
   double_tap_action?: ActionConfig;
+  /** Progress chips on a calendar: count all-day events, and how far ahead to look. */
+  include_all_day?: boolean;
+  look_ahead_days?: number;
 }
+
+const isProgress = (c: Chip): boolean => c.type === 'progress';
 
 export interface ChipsCardConfig extends BaseCardConfig {
   /** A: full chips. B: icons only with badges. C: big glance chips. */
@@ -70,42 +79,6 @@ const ACTIVE_COLOR: Record<string, string> = {
   vacuum: '#40C8C0',
   media_player: '#BF5AF2',
 };
-/** Home Assistant's theme colour names (frontend THEME_COLORS), with HomeView fallbacks. */
-const THEME_COLORS: Record<string, string> = {
-  primary: 'var(--primary-color)',
-  accent: 'var(--accent-color)',
-  red: '#E5484D',
-  pink: '#FF6FB1',
-  purple: '#BF5AF2',
-  'deep-purple': '#7D6BFF',
-  indigo: '#5E5CE6',
-  blue: '#4C8DFF',
-  'light-blue': '#5AC8FA',
-  cyan: '#40C8E0',
-  teal: '#40C8C0',
-  green: '#4CD07D',
-  'light-green': '#8BD66B',
-  lime: '#C6E05A',
-  yellow: '#FFD60A',
-  amber: '#FFC94D',
-  orange: '#FF8A3D',
-  'deep-orange': '#FF6A3D',
-  brown: '#A2845E',
-  'light-grey': '#C7C7CC',
-  grey: '#8E8E93',
-  'dark-grey': '#636366',
-  'blue-grey': '#7D8FA3',
-  black: '#000000',
-  white: '#FFFFFF',
-  'primary-text': 'var(--primary-text-color)',
-  'secondary-text': 'var(--secondary-text-color)',
-  disabled: 'var(--disabled-text-color)',
-};
-
-/** A named colour reads the theme's own variable first, as Home Assistant does. */
-const themeColor = (name: string): string =>
-  name in THEME_COLORS ? (THEME_COLORS[name].startsWith('var(') ? THEME_COLORS[name] : `var(--${name}-color, ${THEME_COLORS[name]})`) : name;
-
 const ACTIVE_STATES = ['on', 'open', 'unlocked', 'heat', 'heating', 'cleaning', 'playing', 'triggered', 'armed_away', 'armed_home', 'armed_night'];
 
 const EDITOR: EditorSpec = {
@@ -129,7 +102,14 @@ const EDITOR: EditorSpec = {
 export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
   @state() private now = new Date();
   @state() private expanded?: number;
+  /** Progress chips: the clock their countdowns run on, which overlapping event shows, and calendar events by entity. */
+  @state() private tick = Date.now();
+  @state() private cycle = 0;
+  @state() private calendars: Record<string, CalendarEvent[]> = {};
+  private fetched: Record<string, string> = {};
   private timer?: number;
+  private ticker?: number;
+  private cycler?: number;
   private holdTimer?: number;
   private tapTimer?: number;
   private held = false;
@@ -160,6 +140,8 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
       c.attention_when?.entity,
       c.success_when?.entity,
       c.alert_when?.entity,
+      c.value_entity,
+      c.pin_entity,
       ...fromConditions(c.visibility),
     ]);
   }
@@ -171,15 +153,49 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
   connectedCallback(): void {
     super.connectedCallback();
     if (this.config?.show_greeting) this.timer = window.setInterval(() => (this.now = new Date()), 60_000);
+    // Calendar and timer progress counts down by the second; nothing else needs a clock.
+    this.ticker = window.setInterval(() => {
+      const live = this.config?.chips.some((c) => isProgress(c) && c.entity && (isCalendar(c.entity) || (isTimer(c.entity) && this.hass?.states[c.entity]?.state === 'active')));
+      if (live) this.tick = Date.now();
+    }, 1000);
+    this.cycler = window.setInterval(() => this.cycle++, 8000);
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
     window.clearInterval(this.timer);
+    window.clearInterval(this.ticker);
+    window.clearInterval(this.cycler);
+  }
+
+  protected updated(changed: PropertyValues): void {
+    super.updated(changed);
+    if (!this.hass) return;
+    // Calendar progress chips: refetch events whenever the calendar changes state.
+    for (const c of this.config.chips) {
+      if (!isProgress(c) || !c.entity || !isCalendar(c.entity)) continue;
+      const st = this.hass.states[c.entity];
+      const key = `${st?.last_changed}|${c.include_all_day ? 1 : 0}`;
+      if (this.fetched[c.entity] === key) continue;
+      this.fetched[c.entity] = key;
+      const entity = c.entity;
+      fetchCalendarEvents(this.hass as never, entity, c.look_ahead_days ?? 7)
+        .then((raw) => (this.calendars = { ...this.calendars, [entity]: parseEvents(raw, !!c.include_all_day) }))
+        .catch(() => {
+          const ev = st ? eventFromAttributes(st.attributes, !!c.include_all_day) : undefined;
+          this.calendars = { ...this.calendars, [entity]: ev ? [ev] : [] };
+        });
+    }
+  }
+
+  private progress(c: Chip): ProgressReading | undefined {
+    if (!isProgress(c) || !c.entity) return undefined;
+    return progressReading(this.hass!, c as ProgressSource, { now: this.tick, events: this.calendars[c.entity] ?? [], cycle: this.cycle });
   }
 
   private visible(c: Chip): boolean {
     const hass = this.hass!;
+    if (isProgress(c) && this.progress(c)?.hidden) return false;
     if (c.show_when && !passes(hass, c.show_when, c.entity)) return false;
     if (!c.visibility?.length) return true;
     return c.visibility.every((cond) => checkCondition(cond, { hass: hass as never, template: () => undefined }));
@@ -288,8 +304,25 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
     return ACTIVE_STATES.includes(st.state) ? ACTIVE_COLOR[domain] : undefined;
   }
 
+  /** The icon inside a ring that fills clockwise from the top, in the progress colour. */
+  private ringVisual(c: Chip, st: HassEntity | undefined, r: ProgressReading) {
+    const color = progressColor(c as ProgressSource, r);
+    const icon = c.icon || r.icon;
+    const R = 16.5;
+    const C = 2 * Math.PI * R;
+    return html`<i class="ring" style="color:${color}">
+      ${svg`<svg viewBox="0 0 36 36" aria-hidden="true">
+        <circle cx="18" cy="18" r=${R} class="track"></circle>
+        <circle cx="18" cy="18" r=${R} class="arc" style="stroke:${color}" stroke-dasharray="${(r.fraction * C).toFixed(2)} ${C.toFixed(2)}" transform="rotate(-90 18 18)"></circle>
+      </svg>`}
+      ${icon ? html`<ha-icon .icon=${icon}></ha-icon>` : st ? html`<ha-state-icon .hass=${this.hass} .stateObj=${st}></ha-state-icon>` : nothing}
+    </i>`;
+  }
+
   private visual(c: Chip, st: HassEntity | undefined, level: Level) {
     const filled = level !== 'calm' ? LEVEL[level] : undefined;
+    const r = this.progress(c);
+    if (r) return this.ringVisual(c, st, r);
     const picture = c.show_entity_picture && st?.attributes.entity_picture ? this.hass!.hassUrl(st.attributes.entity_picture) : undefined;
     if (picture) return html`<i class="pic" style="background-image:url('${picture}')"></i>`;
     if (c.show_icon === false) return nothing;
@@ -307,8 +340,11 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
     const level = this.level(c);
     const style = this.config.style ?? 'full';
     const filled = level !== 'calm' ? LEVEL[level] : undefined;
-    const [nameLine, stateLine] = this.lines(c, st);
-    const label = [nameLine, stateLine].filter(Boolean).join(' · ');
+    const r = this.progress(c);
+    const [nameLine, stateLine] = r
+      ? [c.show_name === false ? '' : r.name, c.show_state === false ? '' : r.done ? 'Done' : r.value]
+      : this.lines(c, st);
+    const label = [nameLine, stateLine, r && !r.done ? `${Math.round(r.fraction * 100)}%` : ''].filter(Boolean).join(' · ');
     const handlers = { down: this.down(c), click: this.onClick(c, i) };
     if (style === 'compact' && this.expanded !== i) {
       const n = c.badge && st ? Number(st.state) : NaN;
@@ -428,6 +464,33 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
       .chip i.pic,
       .dotc i.pic {
         background: center / cover no-repeat;
+      }
+      /* Progress: the ring replaces the icon's disc, with the icon a little smaller inside it. */
+      .chip i.ring,
+      .dotc i.ring {
+        position: relative;
+        background: none;
+        --mdc-icon-size: 18px;
+      }
+      .chip.big i.ring {
+        --mdc-icon-size: 21px;
+      }
+      i.ring svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+      i.ring circle {
+        fill: none;
+        stroke-width: 3;
+      }
+      i.ring .track {
+        stroke: var(--_track);
+      }
+      i.ring .arc {
+        stroke-linecap: round;
+        transition: stroke-dasharray 0.6s ease;
       }
       .lines {
         display: flex;

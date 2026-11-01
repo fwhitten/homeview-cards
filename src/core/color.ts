@@ -80,3 +80,42 @@ export const supportsTemp = (st?: HassEntity): boolean =>
   (st?.attributes.supported_color_modes as string[] | undefined)?.includes('color_temp') ?? false;
 export const supportsBrightness = (st?: HassEntity): boolean =>
   (st?.attributes.supported_color_modes as string[] | undefined)?.some((m) => m !== 'onoff') ?? false;
+
+/** Home Assistant's theme colour names (frontend THEME_COLORS), with HomeView fallbacks. */
+export const THEME_COLORS: Record<string, string> = {
+  primary: 'var(--primary-color)',
+  accent: 'var(--accent-color)',
+  red: '#E5484D',
+  pink: '#FF6FB1',
+  purple: '#BF5AF2',
+  'deep-purple': '#7D6BFF',
+  indigo: '#5E5CE6',
+  blue: '#4C8DFF',
+  'light-blue': '#5AC8FA',
+  cyan: '#40C8E0',
+  teal: '#40C8C0',
+  green: '#4CD07D',
+  'light-green': '#8BD66B',
+  lime: '#C6E05A',
+  yellow: '#FFD60A',
+  amber: '#FFC94D',
+  orange: '#FF8A3D',
+  'deep-orange': '#FF6A3D',
+  brown: '#A2845E',
+  'light-grey': '#C7C7CC',
+  grey: '#8E8E93',
+  'dark-grey': '#636366',
+  'blue-grey': '#7D8FA3',
+  black: '#000000',
+  white: '#FFFFFF',
+  'primary-text': 'var(--primary-text-color)',
+  'secondary-text': 'var(--secondary-text-color)',
+  disabled: 'var(--disabled-text-color)',
+};
+
+/** A named colour reads the theme's own variable first, as Home Assistant does. */
+export const themeColor = (name: string): string =>
+  name in THEME_COLORS ? (THEME_COLORS[name].startsWith('var(') ? THEME_COLORS[name] : `var(--${name}-color, ${THEME_COLORS[name]})`) : name;
+
+/** A colour as hex, for maths such as picking a readable ink: theme names give their HomeView fallback. */
+export const themeHex = (name: string): string => (THEME_COLORS[name] && !THEME_COLORS[name].startsWith('var(') ? THEME_COLORS[name] : name);

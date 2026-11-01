@@ -86,7 +86,83 @@ const chipSchema = (c: Chip): Field[] => [
   },
 ];
 
+/**
+ * A progress chip: ha-progress-card's options. Pin states come from the pin
+ * entity's own states; calendar options only show for a calendar.
+ */
+const progressSchema = (c: Chip): Field[] => {
+  const calendar = String(c.entity ?? '').startsWith('calendar.');
+  const numeric = !calendar && !String(c.entity ?? '').startsWith('timer.');
+  return [
+    { name: 'entity', selector: { entity: {} } },
+    { type: 'grid', name: '', schema: [{ name: 'name', selector: { text: {} } }, { name: 'icon', selector: { icon: {} }, context: { icon_entity: 'entity' } }] },
+    { type: 'grid', name: '', schema: [{ name: 'show_name', selector: { boolean: {} } }, { name: 'show_state', selector: { boolean: {} } }] },
+    ...(numeric
+      ? [
+          { type: 'grid', name: '', schema: [{ name: 'min', selector: { number: { mode: 'box', step: 'any' } } }, { name: 'max', selector: { number: { mode: 'box', step: 'any' } } }] },
+          { name: 'value_entity', selector: { entity: {} } },
+        ]
+      : []),
+    { name: 'color', selector: { ui_color: {} } },
+    {
+      name: 'thresholds',
+      selector: {
+        object: {
+          multiple: true,
+          label_field: 'value',
+          fields: {
+            value: { label: 'From', required: true, selector: { number: { mode: 'box', step: 'any' } } },
+            color: { label: 'Colour', required: true, selector: { ui_color: {} } },
+          },
+        },
+      },
+    },
+    ...(numeric
+      ? [
+          {
+            type: 'expandable',
+            name: '',
+            title: 'Pin while…',
+            icon: 'mdi:pin-outline',
+            schema: [
+              { name: 'pin_entity', selector: { entity: {} } },
+              { name: 'pin_states', selector: { state: { entity_id: c.pin_entity, multiple: true } } },
+              { name: 'pin_value', selector: { select: { mode: 'dropdown', custom_value: true, options: [{ value: 'max', label: 'Full' }, { value: 'min', label: 'Empty' }] } } },
+            ],
+          },
+        ]
+      : []),
+    ...(calendar
+      ? [
+          { name: 'hide_when', selector: { select: { mode: 'dropdown', options: [{ value: 'never', label: 'Never' }, { value: 'no_events_today', label: 'Nothing left today' }, { value: 'no_events', label: 'Nothing coming up' }] } } },
+          { type: 'grid', name: '', schema: [{ name: 'include_all_day', selector: { boolean: {} } }, { name: 'look_ahead_days', selector: { number: { min: 1, max: 31, mode: 'box' } } }] },
+        ]
+      : []),
+    {
+      type: 'expandable',
+      name: '',
+      title: 'Interactions',
+      icon: 'mdi:gesture-tap',
+      schema: [
+        { name: 'tap_action', selector: { ui_action: {} } },
+        { name: 'hold_action', selector: { ui_action: {} } },
+        { name: 'double_tap_action', selector: { ui_action: {} } },
+      ],
+    },
+  ];
+};
+
 const LABELS: Record<string, string> = {
+  min: 'Minimum',
+  max: 'Maximum',
+  value_entity: 'Show this entity as the value (e.g. time remaining)',
+  thresholds: 'Colour from a value upwards',
+  pin_entity: 'Status entity',
+  pin_states: 'In any of these states',
+  pin_value: 'Hold the ring at',
+  hide_when: 'Hide the chip when there is',
+  include_all_day: 'Include all-day events',
+  look_ahead_days: 'Look ahead (days)',
   entity: 'Entity',
   state: 'State is',
   state_not: 'State is not',
@@ -193,10 +269,10 @@ export class HomeViewChipsEditor extends LitElement {
     this.emit(this.chips.filter((_, k) => k !== i));
   }
 
-  private add(entity: string): void {
+  private add(entity: string, type?: 'progress'): void {
     if (!entity) return;
     this.open = this.chips.length;
-    this.emit([...this.chips, { entity }]);
+    this.emit([...this.chips, type ? { type, entity } : { entity }]);
   }
 
   private chipTitle(c: Chip): string {
@@ -254,7 +330,7 @@ export class HomeViewChipsEditor extends LitElement {
         </div>
         <button class="main" @click=${() => (this.open = open ? undefined : i)}>
           <span class="ico">${c.icon ? html`<ha-icon .icon=${c.icon}></ha-icon>` : st ? html`<ha-state-icon .hass=${this.hass} .stateObj=${st}></ha-state-icon>` : html`<ha-icon icon="mdi:label-outline"></ha-icon>`}</span>
-          <span class="txt"><b>${this.chipTitle(c)}</b><small>${c.entity ?? 'No entity'}${c.visibility?.length ? ' · conditional' : ''}</small></span>
+          <span class="txt"><b>${this.chipTitle(c)}</b><small>${c.type === 'progress' ? 'Progress · ' : ''}${c.entity ?? 'No entity'}${c.visibility?.length ? ' · conditional' : ''}</small></span>
           <ha-icon class="chev" .icon=${open ? 'mdi:chevron-up' : 'mdi:pencil-outline'}></ha-icon>
         </button>
         <button class="icon-btn" aria-label="Remove chip" @click=${() => this.removeChip(i)}><ha-icon icon="mdi:delete-outline"></ha-icon></button>
@@ -264,8 +340,8 @@ export class HomeViewChipsEditor extends LitElement {
             <ha-form
               .hass=${this.hass}
               .data=${c}
-              .schema=${chipSchema(c)}
-              .computeLabel=${(s: Field) => LABELS[s.name as string] ?? s.label ?? s.name}
+              .schema=${c.type === 'progress' ? progressSchema(c) : chipSchema(c)}
+              .computeLabel=${(s: Field) => (s.name === 'color' && c.type === 'progress' ? 'Ring colour' : LABELS[s.name as string] ?? s.label ?? s.name)}
               @value-changed=${(e: CustomEvent) => {
                 e.stopPropagation();
                 this.set(i, e.detail.value as Chip);
@@ -290,6 +366,16 @@ export class HomeViewChipsEditor extends LitElement {
           @value-changed=${(e: CustomEvent) => {
             e.stopPropagation();
             this.add(e.detail.value?.entity);
+          }}
+        ></ha-form>
+        <ha-form
+          .hass=${this.hass}
+          .data=${{}}
+          .schema=${[{ name: 'entity', selector: { entity: {} } }]}
+          .computeLabel=${() => 'Add a progress chip (progress %, timer or calendar)'}
+          @value-changed=${(e: CustomEvent) => {
+            e.stopPropagation();
+            this.add(e.detail.value?.entity, 'progress');
           }}
         ></ha-form>
       </div>
@@ -436,6 +522,9 @@ export class HomeViewChipsEditor extends LitElement {
       --mdc-icon-size: 18px;
     }
     .add {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
       margin-top: 12px;
     }
   `;

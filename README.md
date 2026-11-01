@@ -452,6 +452,43 @@ chips:
 | `attention_when` / `success_when` / `alert_when` | | Fills the chip amber, green, or red and pulsing |
 | `tap_action` / `hold_action` / `double_tap_action` | more-info | Any HA action, including `navigate` (hash paths such as `#lights-pop-up` work for Bubble Card pop-ups) |
 
+#### Progress chips
+
+`type: progress` puts a ring around the icon that fills as something runs,
+with the name over the time remaining (or the percentage). It takes
+[ha-progress-card](https://github.com/fwhitten/progress-bar-card)'s options, so
+that card's YAML pastes in: a number between `min` and `max`, a running
+timer, or the calendar event in progress.
+
+```yaml
+- type: progress
+  entity: sensor.bosch_dishwasher_program_progress
+  name: Dishwasher
+  icon: mdi:dishwasher
+  color: blue                     # or bar_color; theme names or any CSS colour
+  thresholds:
+    - { value: 100, color: light-green }
+  value_entity: sensor.bosch_dishwasher_remaining_program_time
+  pin_entity: sensor.bosch_dishwasher_operation_state
+  pin_states: [finished]
+  pin_value: max                  # max, min or a number
+  visibility:
+    - condition: state
+      entity: sensor.bosch_dishwasher_power_state
+      state: 'on'
+- type: progress
+  entity: calendar.octopus_energy_octoplus_power_up
+  name: Power Up
+  icon: mdi:lightning-bolt
+  color: green
+  hide_when: no_events_today      # never | no_events_today | no_events
+```
+
+When it finishes (pinned at the maximum, or reaching it) the ring closes in
+its final colour and the chip says Done until its visibility hides it. Tap
+opens the entity's more-info. `show_name: false` or `show_state: false` drop a
+line. In the visual editor, use **Add a progress chip**.
+
 ### Notifications
 
 Same options as [Fullscreen Notification Card](https://github.com/fwhitten/ha-fullscreen-notification-card#card-options),

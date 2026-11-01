@@ -27,6 +27,7 @@ import {
   type Threshold,
 } from '../core/energy';
 import { gappedPaths } from '../core/chart';
+import { SizeController } from '../core/measure';
 import { time } from '../core/format';
 import { devicesNow } from '../cards/energy-card';
 import { defineElement } from '../core/register';
@@ -51,6 +52,7 @@ export class HomeViewEnergyPopup extends PopupContent {
   @state() private prefs?: EnergyPrefs;
   @state() private hours = 3;
   @state() private power: Array<number | null> = [];
+  private chartSize = new SizeController(this, '.chart svg');
   @state() private period: Period = 'day';
   @state() private offset = 0;
   @state() private breakdown?: Breakdown;
@@ -229,20 +231,21 @@ export class HomeViewEnergyPopup extends PopupContent {
 
   private powerChart() {
     if (this.power.length < 2) return html`<div class="empty sub">No power history yet</div>`;
-    const W = 640;
+    // Drawn at the chart's real width, so no stretching (and no non-scaling-stroke, which WebKit mis-colours).
+    const W = this.chartSize.width || 640;
     const H = 132;
     const peak = this.peak ?? 0;
     const max = this.cfg.y_max > 0 ? this.cfg.y_max : niceMax(Math.max(peak, 100));
-    const { line, area } = gappedPaths(this.power, 0, W, 0, H, max);
+    const { line, area } = gappedPaths(this.power, 0, W, 2, H - 1, max, H);
     const stops = gradientStops(this.thresholds, max);
     const step = max / 4;
     return html`<div class="chart">
       <div class="yaxis">${[4, 3, 2, 1].map((k) => html`<span>${formatPower(step * k, this.hass!.locale.language).value}${k === 4 ? ` ${formatPower(step * 4).unit}` : ''}</span>`)}</div>
-      ${svg`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Power over the last ${this.hours} hours">
-        <defs><linearGradient id="pt" gradientUnits="userSpaceOnUse" x1="0" y1=${H} x2="0" y2="0">${stops.map((s) => svg`<stop offset=${s.offset} stop-color=${s.color}></stop>`)}</linearGradient></defs>
-        <path d="M0 33 H${W} M0 66 H${W} M0 99 H${W}" stroke="var(--_track)" stroke-width="1" vector-effect="non-scaling-stroke"></path>
+      ${svg`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Power over the last ${this.hours} hours">
+        <defs><linearGradient id="pt" gradientUnits="userSpaceOnUse" x1="0" y1=${H - 1} x2="0" y2="2">${stops.map((s) => svg`<stop offset=${s.offset} stop-color=${s.color}></stop>`)}</linearGradient></defs>
+        <path d="M0 33 H${W} M0 66 H${W} M0 99 H${W}" stroke="var(--_track)" stroke-width="1"></path>
         <path d=${area} fill="url(#pt)" fill-opacity=".2"></path>
-        <path d=${line} fill="none" stroke="url(#pt)" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>
+        <path d=${line} fill="none" stroke="url(#pt)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></path>
       </svg>`}
       <div class="xaxis">
         ${[3, 2, 1].map((k) => html`<span>${time(this.hass, new Date(Date.now() - ((this.hours * k) / 3) * 3_600_000))}</span>`)}<span>Now</span>
