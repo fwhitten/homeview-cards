@@ -88,7 +88,9 @@ the text; turn it on with `night_entity` (an `input_boolean`, a
 `binary_sensor`, or `sun.sun` for "after sunset").
 
 Every colour reads a `--hv-*` variable first, so [HomeView Theme](https://github.com/fwhitten/homeview-theme)
-or your own theme can restyle the glass.
+or your own theme can restyle the glass. Every card insets its content by the
+same amount, `--hv-card-padding` (18px), and rounds its corners by
+`--hv-radius` (30px).
 
 ## The wall-panel view
 
@@ -248,6 +250,8 @@ entity: camera.driveway_sub         # the card's feed: a low-resolution stream s
 view: snapshot                      # live | snapshot
 stream_entity: camera.driveway_main # played when tapped; defaults to entity
 aspect_ratio: '16:9'                # the pop-up's shape
+popup_on_detection: true            # open the pop-up when a detection fires
+popup_timeout: 60                   # …and close it again after this many seconds (0: stays)
 events:
   - entity: binary_sensor.driveway_person_detected
     label: Person
@@ -257,8 +261,11 @@ events:
 Tap opens HomeView's camera pop-up: the stream edge to edge, as large as the
 screen allows, playing straight away without player controls. The card's
 still shows until the first frame arrives. The LIVE badge, recent detections,
-a clock and a mute button sit over the picture. Hold still opens Home
-Assistant's more-info.
+a clock and a mute button sit over the picture. If the Home Assistant app
+won't start video by itself, a play button appears; one tap starts it. Hold
+still opens Home Assistant's more-info. In snapshot view the card's clock
+shows when the still on screen was taken. A pop-up that opened for a detection
+stays open once you touch it.
 
 ### Media
 
@@ -390,6 +397,11 @@ calendars:
   - entity: calendar.work
     color: "#7D6BFF"
 ```
+
+Tap opens the day as a timeline: hour lines, events as blocks (side by side
+where they overlap), all-day events above, a now line, buttons for the
+previous and next day, and what's coming up over the next week alongside (tap
+one to jump to its day). Hold opens Home Assistant's calendar.
 
 ### Scenes
 

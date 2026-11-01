@@ -1,9 +1,10 @@
-import { css, html, nothing } from 'lit';
+import { css, html, nothing, type PropertyValues } from 'lit';
 import { state } from 'lit/decorators.js';
 import { HomeViewCard, type BaseCardConfig } from '../core/base-card';
 import type { GridOptions } from '../core/types';
 import { detections, ensureStreamElement, snapshotUrl, type CameraEvent } from '../core/camera';
 import { duration, isUnavailable, time } from '../core/format';
+import { openPopup } from '../core/popup-bus';
 import { defineElement, registerCard } from '../core/register';
 import { actionsSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
@@ -24,6 +25,10 @@ export interface CameraCardConfig extends BaseCardConfig {
   stream_entity?: string;
   /** The pop-up's shape, as the stream's width:height. Default 16:9. */
   aspect_ratio?: string;
+  /** Open the pop-up when one of the detections fires. */
+  popup_on_detection?: boolean;
+  /** Seconds before a pop-up opened by a detection closes itself (0: stays open). Touching it keeps it open. */
+  popup_timeout?: number;
 }
 
 const EDITOR: EditorSpec = {
@@ -54,6 +59,12 @@ const EDITOR: EditorSpec = {
       schema: [
         { name: 'stream_entity', selector: { entity: { domain: 'camera' } } },
         { name: 'aspect_ratio', selector: choose([['16:9', '16:9'], ['4:3', '4:3'], ['3:2', '3:2'], ['1:1', 'Square'], ['9:16', '9:16 (portrait)']]) },
+        ...(c.events?.length
+          ? [
+              { name: 'popup_on_detection', selector: { boolean: {} } },
+              ...(c.popup_on_detection ? [{ name: 'popup_timeout', selector: { number: { min: 0, max: 3600, mode: 'box', unit_of_measurement: 's' } } }] : []),
+            ]
+          : []),
       ],
     },
     ...(c.events?.length ? [{ name: 'event_window', selector: { number: { min: 1, max: 1440, mode: 'box', unit_of_measurement: 'min' } } }] : []),
@@ -61,7 +72,7 @@ const EDITOR: EditorSpec = {
     actionsSection(),
     layoutSection,
   ],
-  labels: { entity: 'Camera', stream_entity: 'Stream in the pop-up', aspect_ratio: 'Pop-up shape', view: 'Feed', refresh: 'Refresh every', events: 'Detections', event_window: 'Show detections from the last', show_live_badge: 'LIVE badge', show_time: 'Clock' },
+  labels: { entity: 'Camera', stream_entity: 'Stream in the pop-up', aspect_ratio: 'Pop-up shape', view: 'Feed', refresh: 'Refresh every', events: 'Detections', event_window: 'Show detections from the last', show_live_badge: 'LIVE badge', show_time: 'Clock', popup_on_detection: 'Open when a detection fires', popup_timeout: 'Close it again after' },
   helpers: {
     tap_action: "Default: opens HomeView's camera pop-up. Hold opens Home Assistant's more-info",
     events: 'The most recent one shows in a chip on the feed',
@@ -73,6 +84,10 @@ const EDITOR: EditorSpec = {
 export class HomeViewCameraCard extends HomeViewCard<CameraCardConfig> {
   @state() private streamReady = !!customElements.get('ha-camera-stream');
   @state() private snapshotTick = 0;
+  /** When the still on screen arrived, which is what the clock shows in snapshot view. */
+  @state() private snapAt?: Date;
+  /** Each detection's last firing, to spot a new one. */
+  private fired = new Map<string, string>();
   @state() private clock = new Date();
   private timers: number[] = [];
 
@@ -89,11 +104,37 @@ export class HomeViewCameraCard extends HomeViewCard<CameraCardConfig> {
   }
 
   protected defaults(): Partial<CameraCardConfig> {
-    return { view: 'live', refresh: 10, event_window: 30, show_live_badge: true, show_time: true };
+    return { view: 'live', refresh: 10, event_window: 30, show_live_badge: true, show_time: true, popup_timeout: 60 };
   }
 
   protected watched() {
     return [this.config.entity, ...(this.config.events ?? []).map((e) => e.entity)];
+  }
+
+  protected willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
+    if (changed.has('hass') && this.hass && this.config) this.watchDetections();
+  }
+
+  /**
+   * Open the pop-up when a detection fires: a binary sensor turning on, or an
+   * event entity firing. The first look only records where things stand, so
+   * loading the dashboard never opens it.
+   */
+  private watchDetections(): void {
+    for (const ev of this.config.events ?? []) {
+      const st = this.hass!.states[ev.entity];
+      if (!st) continue;
+      const isEvent = ev.entity.startsWith('event.');
+      const key = isEvent ? st.state : `${st.state}|${st.last_changed}`;
+      const before = this.fired.get(ev.entity);
+      this.fired.set(ev.entity, key);
+      if (before === undefined || before === key || this.preview || !this.config.popup_on_detection) continue;
+      if (isEvent ? !isUnavailable(st) : st.state === 'on') {
+        const seconds = this.config.popup_timeout ?? 60;
+        openPopup('camera', { entity: this.config.entity, config: this.config, autoClose: seconds > 0 ? seconds * 1000 : undefined });
+      }
+    }
   }
 
   protected popupName(): string {
@@ -134,7 +175,7 @@ export class HomeViewCameraCard extends HomeViewCard<CameraCardConfig> {
       <ha-card class="tile cam ${this.clickable ? 'clickable' : ''}" tabindex="0" role="button" aria-label="${name} camera">
         ${live
           ? html`<ha-camera-stream class="feed" .hass=${this.hass} .stateObj=${st} muted .controls=${false} .fitMode=${'cover'}></ha-camera-stream>`
-          : html`<img class="feed" src=${snapshotUrl(this.hass, st, this.snapshotTick)} alt="" />`}
+          : html`<img class="feed" src=${snapshotUrl(this.hass, st, this.snapshotTick)} alt="" @load=${() => (this.snapAt = new Date())} />`}
         <div class="scan" aria-hidden="true"></div>
         <div class="fade top" aria-hidden="true"></div>
         <div class="fade bottom" aria-hidden="true"></div>
@@ -157,7 +198,9 @@ export class HomeViewCameraCard extends HomeViewCard<CameraCardConfig> {
             : small
               ? html`<span class="sub light">Clear · ${time(this.hass, this.clock)}</span>`
               : html`<span></span>`}
-          ${this.config.show_time && !small ? html`<span class="clock">${time(this.hass, this.clock, true)}</span>` : nothing}
+          ${this.config.show_time && !small
+            ? html`<span class="clock" title=${live ? '' : 'When this still was taken'}>${time(this.hass, live ? this.clock : this.snapAt ?? this.clock, true)}</span>`
+            : nothing}
         </div>
       </ha-card>
     `;
@@ -210,18 +253,18 @@ export class HomeViewCameraCard extends HomeViewCard<CameraCardConfig> {
       }
       .bar {
         position: absolute;
-        left: 20px;
-        right: 20px;
+        left: var(--_pad);
+        right: var(--_pad);
         display: flex;
         justify-content: space-between;
         align-items: center;
         gap: 10px;
       }
       .head {
-        top: 18px;
+        top: var(--_pad);
       }
       .foot {
-        bottom: 18px;
+        bottom: var(--_pad);
       }
       .live {
         display: flex;

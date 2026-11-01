@@ -198,7 +198,8 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
     const hum = this.config.humidity_entity ? numericState(this.stateObj(this.config.humidity_entity)) : (a.current_humidity as number | undefined);
     const name = this.config.name ?? a.friendly_name ?? this.config.entity;
     const icon = this.config.icon ?? style?.icon ?? (off ? 'mdi:power' : 'mdi:thermostat');
-    const iconBg = style && !off ? style.color : 'var(--_glass-hi)';
+    // The icon takes the mode's colour while heating or cooling, as the status text does.
+    const iconInk = style && !off ? 'var(--_heat-ink)' : 'var(--_ink2)';
     const canStep = !off && tgt != null;
     const heroText = cur != null ? `${fixed(this.hass, cur, 1)}${unit}` : '—';
 
@@ -207,16 +208,15 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
 
     // The target lives in the stepper, so the status only says what the system is doing.
     const short = off ? 'Off' : style ? style.verb.replace(/ to$/, '') : 'Idle';
-    const stepperH = html`<div class="stepper-h gl corner-tr">
+    const stepperH = html`<div class="stepper-h gl">
       ${minus}
       <div class="tgt" aria-label="Target ${tgtText}"><div class="tv" style="color:${this.pendingTarget != null ? 'var(--_heat-ink)' : 'inherit'}">${tgtText || '—'}</div></div>
       ${plus}
     </div>`;
     const header = html`
-      <div class="head corner-tl">
-        <span class="round badge ${style && !off ? '' : 'gl'}" style="background:${iconBg};color:${style && !off ? '#fff' : 'var(--_ink2)'}"><ha-icon .icon=${icon}></ha-icon></span>
+      <div class="head">
         <div class="text">
-          <div class="name">${name}</div>
+          <div class="eyebrow"><ha-icon .icon=${icon} style="color:${iconInk}"></ha-icon><span>${name}</span></div>
           <div class="sub status">
             <span style="color:${style && !off ? 'var(--_heat-ink)' : 'var(--_ink2)'}">${short}</span>
             ${hum != null ? html`<span class="hum"><ha-icon icon="mdi:water-percent"></ha-icon>${Math.round(hum)}%</span>` : nothing}
@@ -256,9 +256,8 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
         <ha-card class="tile clickable small" tabindex="0" role="button" aria-label="${name}, ${heroText}, ${status}">
           ${this.graph(203, 56, 2.5)}
           <div class="pad">
-            <div class="head corner-tl">
-              <span class="round badge sm ${style && !off ? '' : 'gl'}" style="background:${iconBg};color:${style && !off ? '#fff' : 'var(--_ink2)'}"><ha-icon .icon=${icon}></ha-icon></span>
-              <div class="name">${name}</div>
+            <div class="head">
+              <div class="eyebrow"><ha-icon .icon=${icon} style="color:${iconInk}"></ha-icon><span>${name}</span></div>
             </div>
             <div class="mid">${heroText}</div>
             <div class="sub status" style="color:${style && !off ? 'var(--_heat-ink)' : 'var(--_ink2)'}">${off ? 'Off' : tgtText ? `To ${tgtText}` : status}</div>
@@ -289,7 +288,7 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
     css`
       .pad {
         position: relative;
-        padding: 18px 20px 0;
+        padding: var(--_pad) var(--_pad) 0;
       }
       .graph {
         position: absolute;
@@ -311,19 +310,8 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
       .text {
         min-width: 0;
       }
-      .badge {
-        width: 44px;
-        height: 44px;
-        cursor: default;
-        --mdc-icon-size: 24px;
-      }
-      .badge.sm {
-        width: 40px;
-        height: 40px;
-        --mdc-icon-size: 22px;
-      }
-      .head:has(.badge.sm) {
-        --_cd: 40px;
+      .text .status {
+        margin-top: 3px;
       }
       .status {
         font-weight: 600;
@@ -370,7 +358,6 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
         padding: 4px;
         border-radius: 999px;
         flex: none;
-        --_cd: 48px;
       }
       .stepper-h .step {
         width: 40px;
@@ -397,7 +384,7 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
         margin-top: 12px;
       }
       .large .pad {
-        padding: 22px 22px 0;
+        padding: var(--_pad) var(--_pad) 0;
       }
       .hero-row {
         display: flex;
@@ -445,8 +432,8 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
       }
       .legend {
         position: absolute;
-        left: 22px;
-        right: 22px;
+        left: var(--_pad);
+        right: var(--_pad);
         bottom: 170px;
         display: flex;
         gap: 16px;
@@ -472,8 +459,8 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
       }
       .axis {
         position: absolute;
-        left: 22px;
-        right: 22px;
+        left: var(--_pad);
+        right: var(--_pad);
         bottom: 10px;
         display: flex;
         justify-content: space-between;

@@ -141,6 +141,27 @@ export const fetchCalendarEvents = (
   return events;
 };
 
+/** Events between two moments, for browsing days other than today. Cached like fetchCalendarEvents. */
+export const fetchCalendarRange = (hass: HomeAssistant, entityId: string, from: Date, to: Date): Promise<RawCalendarEvent[]> => {
+  const key = `${entityId}|${from.getTime()}-${to.getTime()}`;
+  const now = Date.now();
+  const hit = cache.get(key);
+  if (hit && now - hit.createdAt < CACHE_TTL) return hit.events;
+  const events = Promise.resolve(
+    hass.callService("calendar", "get_events", { start_date_time: localStamp(from), end_date_time: localStamp(to) }, { entity_id: entityId }, false, true),
+  )
+    .then((result) => {
+      const response = (result as { response?: Record<string, { events?: RawCalendarEvent[] }> } | undefined)?.response;
+      return response?.[entityId]?.events ?? [];
+    })
+    .catch((err) => {
+      cache.delete(key);
+      throw err;
+    });
+  cache.set(key, { createdAt: now, events });
+  return events;
+};
+
 export const invalidateCalendar = (entityId: string): void => {
   for (const key of [...cache.keys()]) {
     if (key.startsWith(`${entityId}|`)) cache.delete(key);

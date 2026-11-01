@@ -3,6 +3,7 @@ import './popups/lights-popup';
 import './popups/energy-popup';
 import './popups/boiler-popup';
 import './popups/camera-popup';
+import './popups/agenda-popup';
 import './cards/light-card';
 import './cards/thermostat-card';
 import './cards/weather-card';

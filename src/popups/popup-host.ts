@@ -39,10 +39,13 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
   private pushed = false;
   /** Marks the history entry this opening pushed, so entries left over from a reload aren't mistaken for it. */
   private token = '';
+  private autoTimer?: number;
 
   constructor() {
     super();
     this.addEventListener('context-request', this.forwardContext);
+    // Once someone touches a pop-up that opened by itself, it stays until they close it.
+    this.addEventListener('pointerdown', () => window.clearTimeout(this.autoTimer));
   }
 
   /**
@@ -69,6 +72,8 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
   };
 
   show(name: string, props: PopupProps): void {
+    window.clearTimeout(this.autoTimer);
+    if (props.autoClose) this.autoTimer = window.setTimeout(() => this.close(), props.autoClose);
     this.name = name;
     this.props = props;
     this.hass = store.hass;
@@ -90,6 +95,7 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
   }
 
   private dismiss(): void {
+    window.clearTimeout(this.autoTimer);
     this.open = false;
     this.pushed = false;
     window.setTimeout(() => {
@@ -289,6 +295,9 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
         overflow: hidden;
         background: #000;
         color: #fff;
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+        transform: none;
       }
       .sheet.media header {
         position: absolute;

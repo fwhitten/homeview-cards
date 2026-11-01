@@ -177,9 +177,9 @@ export class HomeViewLightCard extends HomeViewCard<LightCardConfig> {
       <div class="in">
         <div class="top">
           ${overlay
-            ? html`<span class="round icon corner-tl" style="background:${iconBg};color:${iconInk}"><ha-icon .icon=${icon}></ha-icon></span>`
+            ? html`<span class="round icon" style="background:${iconBg};color:${iconInk}"><ha-icon .icon=${icon}></ha-icon></span>`
             : html`<button
-                class="round icon corner-tl ${on ? '' : 'gl'}"
+                class="round icon ${on ? '' : 'gl'}"
                 style="background:${iconBg};color:${iconInk}"
                 aria-label="Toggle ${this.heading}"
                 @click=${this.toggle}

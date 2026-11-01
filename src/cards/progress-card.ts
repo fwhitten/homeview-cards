@@ -225,7 +225,9 @@ export class HomeViewProgressCard extends HomeViewCard<ProgressCardConfig> {
     const C = 2 * Math.PI * R;
     return svg`<svg class="ring" viewBox="0 0 100 100" style="width:${px}px;height:${px}px" aria-hidden="true">
       <circle cx="50" cy="50" r=${R} fill="none" stroke="var(--_track)" stroke-width=${stroke}></circle>
-      <circle cx="50" cy="50" r=${R} fill="none" stroke=${color} stroke-width=${stroke} stroke-linecap="round" stroke-dasharray="${(r.fraction * C).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 50 50)"></circle>
+      ${r.fraction > 0
+        ? svg`<circle cx="50" cy="50" r=${R} fill="none" stroke=${color} stroke-width=${stroke} stroke-linecap="round" stroke-dasharray="${(r.fraction * C).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 50 50)"></circle>`
+        : nothing}
     </svg>`;
   }
 
@@ -302,7 +304,7 @@ export class HomeViewProgressCard extends HomeViewCard<ProgressCardConfig> {
       .row {
         position: absolute;
         inset: 0;
-        padding: 0 22px;
+        padding: 0 var(--_pad);
         display: flex;
         align-items: center;
         gap: 14px;
@@ -411,7 +413,7 @@ export class HomeViewProgressCard extends HomeViewCard<ProgressCardConfig> {
         display: flex;
         align-items: center;
         gap: 22px;
-        padding: 0 24px 0 20px;
+        padding: 0 var(--_pad);
       }
       .ringwide .rv {
         font-size: 46px;
@@ -425,11 +427,11 @@ export class HomeViewProgressCard extends HomeViewCard<ProgressCardConfig> {
         justify-content: center;
         gap: 10px;
         text-align: center;
-        padding: 12px;
+        padding: var(--_pad);
       }
       .ringcol.l {
         justify-content: space-between;
-        padding: 22px 24px 20px;
+        padding: var(--_pad);
       }
       .cap2 {
         min-width: 0;

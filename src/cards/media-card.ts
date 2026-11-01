@@ -252,11 +252,11 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
     `;
   }
 
-  private volumeButton(st: HassEntity, small: boolean, corner = '') {
+  private volumeButton(st: HassEntity, small: boolean) {
     if (!supports(st, F.VOLUME_MUTE) && !supports(st, F.VOLUME_SET)) return nothing;
     const muted = !!st.attributes.is_volume_muted;
     return html`<button
-      class="round gl vol ${small ? 'sm' : ''} ${corner}"
+      class="round gl vol ${small ? 'sm' : ''}"
       aria-label=${muted ? 'Unmute' : 'Mute'}
       @click=${supports(st, F.VOLUME_MUTE) ? this.svc('volume_mute', { is_volume_muted: !muted }) : this.moreInfo}
     >
@@ -292,8 +292,8 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
         ${big
           ? html`
               <div class="topbar">
-                <span class="round gl app corner-tl"><ha-icon icon="mdi:music"></ha-icon></span>
-                ${this.volumeButton(st, false, 'corner-tr')}
+                <span class="round gl app"><ha-icon icon="mdi:music"></ha-icon></span>
+                ${this.volumeButton(st, false)}
               </div>
               <div class="art big-art" style=${art ? `background-image:url('${art}')` : ''}>${art ? nothing : html`<ha-icon icon="mdi:music-note"></ha-icon>`}</div>
               <div class="titles">
@@ -393,7 +393,7 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
         position: relative;
         height: 100%;
         box-sizing: border-box;
-        padding: 18px;
+        padding: var(--_pad);
         display: flex;
         gap: 18px;
       }
@@ -441,9 +441,9 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
       }
       .topbar {
         position: absolute;
-        left: 20px;
-        right: 20px;
-        top: 18px;
+        left: var(--_pad);
+        right: var(--_pad);
+        top: var(--_pad);
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -545,8 +545,8 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
       }
       .big .titles {
         position: absolute;
-        left: 22px;
-        right: 20px;
+        left: var(--_pad);
+        right: var(--_pad);
         top: 252px;
         display: flex;
         justify-content: space-between;
@@ -571,8 +571,8 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
       }
       .big .progress {
         position: absolute;
-        left: 22px;
-        right: 22px;
+        left: var(--_pad);
+        right: var(--_pad);
         top: 332px;
       }
       .big .progress .bar {

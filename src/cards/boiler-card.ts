@@ -77,12 +77,9 @@ export class HomeViewBoilerCard extends HomeViewCard<BoilerCardConfig> {
     return html`
       <ha-card class="tile clickable" tabindex="0" role="button" aria-label="${name}, ${s.label}${big != null ? `, ${Math.round(big)} degrees` : ''}">
         <div class="in">
-          <div class="head corner-tl">
-            <span class="round badge ${mode === 'idle' ? 'gl' : ''}" style="background:${s.color};color:${s.ink}">
-              <ha-icon class=${animated ? `anim ${hot ? 'drip' : 'flick'}` : ''} .icon=${s.icon}></ha-icon>
-            </span>
+          <div class="head">
             <div class="text">
-              <div class="name">${name}</div>
+              <div class="eyebrow"><ha-icon class=${animated ? `anim ${hot ? 'drip' : 'flick'}` : ''} .icon=${s.icon} style="color:${mode === 'idle' ? 'var(--_ink2)' : s.text}"></ha-icon><span>${name}</span></div>
               <div class="state" style="color:${s.text}">${s.label}</div>
             </div>
           </div>
@@ -121,10 +118,8 @@ export class HomeViewBoilerCard extends HomeViewCard<BoilerCardConfig> {
         font-size: 16px;
         font-weight: 600;
       }
-      .badge {
-        width: 44px;
-        height: 44px;
-        cursor: default;
+      .text .state {
+        margin-top: 3px;
       }
       .reading {
         display: flex;

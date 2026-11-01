@@ -24,6 +24,12 @@ export interface AgendaCardConfig extends BaseCardConfig {
 
 const PALETTE = ['#FF8A3D', '#7D6BFF', '#4CD07D', '#FFB340', '#4C8DFF', '#BF5AF2', '#40C8C0', '#FF6FB1'];
 
+/** Each calendar with its colour: its own, or the palette's in order. Shared with the pop-up. */
+export const agendaCalendars = (config: Pick<AgendaCardConfig, 'calendars'>): Required<AgendaCalendar>[] =>
+  (config.calendars ?? []).map((c, i) =>
+    typeof c === 'string' ? { entity: c, color: PALETTE[i % PALETTE.length] } : { entity: c.entity, color: c.color ?? PALETTE[i % PALETTE.length] },
+  );
+
 const EDITOR: EditorSpec = {
   schema: (c) => [
     { name: 'calendars', required: true, selector: { entity: { domain: 'calendar', multiple: true } } },
@@ -40,7 +46,7 @@ const EDITOR: EditorSpec = {
     layoutSection,
   ],
   labels: { calendars: 'Calendars', show_tomorrow: "Show tomorrow's first events", max_events: 'Events to show', include_all_day: 'Include all-day events' },
-  helpers: { calendars: 'Colours follow the order. In YAML, use {entity, color} to choose one', tap_action: 'Default: opens the calendar' },
+  helpers: { calendars: 'Colours follow the order. In YAML, use {entity, color} to choose one', tap_action: "Default: opens the day's timeline. Hold opens Home Assistant's calendar" },
 };
 
 /** Agenda (styles B and C): calendars merged, each in its own colour. */
@@ -67,17 +73,21 @@ export class HomeViewAgendaCard extends HomeViewCard<AgendaCardConfig> {
   }
 
   private get calendars(): Required<AgendaCalendar>[] {
-    return this.config.calendars.map((c, i) =>
-      typeof c === 'string' ? { entity: c, color: PALETTE[i % PALETTE.length] } : { entity: c.entity, color: c.color ?? PALETTE[i % PALETTE.length] },
-    );
+    return agendaCalendars(this.config);
   }
 
   protected watched() {
     return this.calendars.map((c) => c.entity);
   }
 
+  protected popupName(): string {
+    return 'agenda';
+  }
+
+  /** Tap opens the timeline pop-up; hold opens Home Assistant's calendar. */
   protected defaultAction(kind: 'tap' | 'hold' | 'double_tap') {
-    if (kind === 'tap') return { action: 'navigate' as const, navigation_path: '/calendar' };
+    if (kind === 'tap') return { action: 'homeview-popup' as const };
+    if (kind === 'hold') return { action: 'navigate' as const, navigation_path: '/calendar' };
     return super.defaultAction(kind);
   }
 
@@ -200,7 +210,7 @@ export class HomeViewAgendaCard extends HomeViewCard<AgendaCardConfig> {
       .list {
         justify-content: flex-start;
         gap: 12px;
-        padding: 20px 22px;
+        padding: var(--_pad);
       }
       .lhead {
         display: flex;
@@ -297,7 +307,7 @@ export class HomeViewAgendaCard extends HomeViewCard<AgendaCardConfig> {
       .date {
         height: 100%;
         box-sizing: border-box;
-        padding: 20px 22px;
+        padding: var(--_pad);
         display: flex;
         align-items: center;
         gap: 22px;

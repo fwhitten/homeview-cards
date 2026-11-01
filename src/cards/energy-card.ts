@@ -474,7 +474,7 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
         justify-content: space-between;
         align-items: flex-start;
         gap: 12px;
-        padding: 18px 20px 0;
+        padding: var(--_pad) var(--_pad) 0;
       }
       .wl {
         display: flex;
@@ -487,7 +487,7 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
         display: flex;
         flex-direction: column;
         gap: 6px;
-        padding: 18px 20px 0;
+        padding: var(--_pad) var(--_pad) 0;
       }
       .val {
         font-size: 52px;
@@ -536,7 +536,7 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
         flex: none;
         display: flex;
         gap: 22px;
-        padding: 14px 20px 0;
+        padding: 14px var(--_pad) 0;
       }
       .stat b {
         font-size: 22px;
@@ -568,9 +568,9 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
       }
       .tlab {
         position: absolute;
-        left: 18px;
-        right: 18px;
-        bottom: 14px;
+        left: var(--_pad);
+        right: var(--_pad);
+        bottom: var(--_pad);
         display: flex;
         justify-content: space-between;
         font-size: 13px;
@@ -579,14 +579,14 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
       }
       .foot {
         margin-top: auto;
-        padding: 12px 20px 18px;
+        padding: 12px var(--_pad) var(--_pad);
         display: flex;
         flex-direction: column;
         gap: 12px;
       }
       :host([size='l']) .foot {
         gap: 20px;
-        padding-bottom: 22px;
+        padding-bottom: var(--_pad);
       }
       .bar {
         display: flex;
@@ -689,13 +689,13 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
         display: flex;
         flex-direction: column;
         gap: 4px;
-        padding: 12px 20px 14px;
+        padding: 12px var(--_pad) var(--_pad);
       }
       :host([size='s']) .hours {
-        padding: 10px 18px 18px;
+        padding: 10px var(--_pad) var(--_pad);
       }
       :host([size='l']) .hours {
-        padding: 18px 20px 16px;
+        padding: 18px var(--_pad) var(--_pad);
       }
       .hbars {
         flex: 1;

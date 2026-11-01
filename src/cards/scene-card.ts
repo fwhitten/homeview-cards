@@ -183,7 +183,7 @@ export class HomeViewSceneCard extends HomeViewCard<SceneCardConfig> {
     const name = this.name({ entity, name: this.config.name });
     return html`<ha-card class="tile clickable" style=${on ? `background:${color};color:${ink}` : ''} tabindex="0" role="button" aria-label="Run ${name}">
       <div class="in">
-        <span class="round badge corner-tl" style="background:${on ? ink : color};color:${on ? color : ink}">${this.icon({ entity, icon: this.config.icon })}</span>
+        <span class="round badge" style="background:${on ? ink : color};color:${on ? color : ink}">${this.icon({ entity, icon: this.config.icon })}</span>
         <div><div class="name">${name}</div><div class="note">${on ? 'Set just now' : this.config.note ?? ''}</div></div>
       </div>
     </ha-card>`;

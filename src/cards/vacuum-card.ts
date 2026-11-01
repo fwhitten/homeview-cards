@@ -150,7 +150,7 @@ export class HomeViewVacuumCard extends HomeViewCard<VacuumCardConfig> {
       const n = this.picked.length;
       return html`<ha-card class="tile" style=${cardStyle}>
         <div class="in big">
-          <div class="head"><div class="hl corner-tl">${badge}<div><div class="name">${name}</div><div class="sub">${label}${sub ? ` · ${sub}` : ''}</div></div></div>${this.batteryChip()}</div>
+          <div class="head"><div class="hl">${badge}<div><div class="name">${name}</div><div class="sub">${label}${sub ? ` · ${sub}` : ''}</div></div></div>${this.batteryChip()}</div>
           ${areas.length && has(st, F.CLEAN_AREA)
             ? html`<div><div class="cap lbl">Areas</div><div class="areas">${areas.map((a) => {
                 const on = this.picked.includes(a);
@@ -184,7 +184,7 @@ export class HomeViewVacuumCard extends HomeViewCard<VacuumCardConfig> {
 
     return html`<ha-card class="tile clickable" style=${cardStyle} tabindex="0" role="button" aria-label="${name}, ${label}">
       <div class="in wide">
-        <div class="head"><div class="hl corner-tl">${badge}<div class="tx"><div class="name">${label}</div><div class="sub st" style="color:${cleaning ? 'var(--_clean-ink)' : error ? 'rgba(255,255,255,.86)' : 'var(--_ink2)'}">${sub || name}</div></div></div>${this.batteryChip()}</div>
+        <div class="head"><div class="hl">${badge}<div class="tx"><div class="name">${label}</div><div class="sub st" style="color:${cleaning ? 'var(--_clean-ink)' : error ? 'rgba(255,255,255,.86)' : 'var(--_ink2)'}">${sub || name}</div></div></div>${this.batteryChip()}</div>
         <div class="acts">${this.actions(st)}</div>
       </div>
     </ha-card>`;
@@ -254,14 +254,10 @@ export class HomeViewVacuumCard extends HomeViewCard<VacuumCardConfig> {
         flex: 1;
       }
       .big {
-        padding: 20px 22px;
-        --_pt: 20px;
-        --_pl: 22px;
+        padding: var(--_pad);
       }
       .wide {
-        padding: 20px 22px;
-        --_pt: 20px;
-        --_pl: 22px;
+        padding: var(--_pad);
       }
       .lbl {
         margin-bottom: 10px;

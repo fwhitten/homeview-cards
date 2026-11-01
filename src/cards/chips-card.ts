@@ -318,7 +318,9 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
     return html`<i class="ring" style="color:${color}">
       ${svg`<svg viewBox="0 0 36 36" aria-hidden="true">
         <circle cx="18" cy="18" r=${R} class="track"></circle>
-        <circle cx="18" cy="18" r=${R} class="arc" style="stroke:${color}" stroke-dasharray="${(r.fraction * C).toFixed(2)} ${C.toFixed(2)}" transform="rotate(-90 18 18)"></circle>
+        ${r.fraction > 0
+          ? svg`<circle cx="18" cy="18" r=${R} class="arc" style="stroke:${color}" stroke-dasharray="${(r.fraction * C).toFixed(2)} ${C.toFixed(2)}" transform="rotate(-90 18 18)"></circle>`
+          : nothing}
       </svg>`}
       ${icon ? html`<ha-icon .icon=${icon}></ha-icon>` : st ? html`<ha-state-icon .hass=${this.hass} .stateObj=${st}></ha-state-icon>` : nothing}
     </i>`;

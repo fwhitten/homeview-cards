@@ -41,6 +41,8 @@ export const tokens = css`
     --hv-c-calendar: #7d6bff;
 
     --_radius: var(--hv-radius, 30px);
+    /* One even inset for every card's content. */
+    --_pad: var(--hv-card-padding, 18px);
     --_font: var(
       --hv-font,
       -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', Inter, system-ui, sans-serif
@@ -162,7 +164,7 @@ export const base = css`
     position: relative;
     height: 100%;
     box-sizing: border-box;
-    padding: 18px 20px;
+    padding: var(--_pad);
     display: flex;
     flex-direction: column;
     justify-content: space-between;
@@ -210,21 +212,20 @@ export const base = css`
     font-weight: 600;
     color: var(--_ink2);
   }
-  /*
-   * Concentric corners: a round control in a tile's corner sits with its
-   * centre on the centre of the corner's curve, so the gap to the rounded
-   * edge is even all the way round. --_cd is the circle's diameter;
-   * containers say their padding with --_pt / --_pl / --_pr.
-   */
-  .corner-tl,
-  .corner-tr {
-    margin-top: calc(var(--_radius) - var(--_cd, 44px) / 2 - var(--_pt, 18px));
+  /* A label with its icon inline, as on the energy card: no circle. */
+  .eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    font-size: 17px;
+    font-weight: 600;
+    white-space: nowrap;
+    --mdc-icon-size: 19px;
   }
-  .corner-tl {
-    margin-left: calc(var(--_radius) - var(--_cd, 44px) / 2 - var(--_pl, 20px));
-  }
-  .corner-tr {
-    margin-right: calc(var(--_radius) - var(--_cd, 44px) / 2 - var(--_pr, 20px));
+  .eyebrow > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .round {
     display: inline-flex;

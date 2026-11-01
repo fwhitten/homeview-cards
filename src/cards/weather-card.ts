@@ -359,14 +359,14 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
         position: relative;
         height: 100%;
         box-sizing: border-box;
-        padding: 24px 26px 22px;
+        padding: var(--_pad);
         display: flex;
         flex-direction: column;
         gap: 12px;
       }
       .compact .body {
         flex-direction: row;
-        padding: 18px 20px 18px 22px;
+        padding: var(--_pad);
         gap: 16px;
       }
       .now {
@@ -431,7 +431,7 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
       /* Inset evenly from the card's sides and bottom, with a concentric radius. */
       .panel {
         --_inset: 12px;
-        margin: auto calc(var(--_inset) - 26px) calc(var(--_inset) - 22px);
+        margin: auto calc(var(--_inset) - var(--_pad)) calc(var(--_inset) - var(--_pad));
         padding: 16px 18px 14px;
         border-radius: calc(var(--_radius) - var(--_inset));
         background: rgba(8, 14, 26, 0.34);
@@ -439,7 +439,7 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
       .compact .panel {
         flex: 1;
         min-width: 0;
-        margin: calc(var(--_inset) - 18px) calc(var(--_inset) - 20px) calc(var(--_inset) - 18px) 0;
+        margin: calc(var(--_inset) - var(--_pad)) calc(var(--_inset) - var(--_pad)) calc(var(--_inset) - var(--_pad)) 0;
         padding: 12px 14px;
         display: flex;
         flex-direction: column;

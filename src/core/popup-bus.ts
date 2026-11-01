@@ -2,6 +2,8 @@
 export interface PopupProps {
   entity?: string;
   config: Record<string, unknown>;
+  /** Close by itself after this many milliseconds unless someone touches it. */
+  autoClose?: number;
 }
 
 export interface PopupHostElement extends HTMLElement {
