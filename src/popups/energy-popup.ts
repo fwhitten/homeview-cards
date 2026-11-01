@@ -78,6 +78,9 @@ export class HomeViewEnergyPopup extends PopupContent {
   protected updated(): void {
     if (this.hass && !this.loaded) {
       this.loaded = true;
+      // Open on the period the card shows.
+      const period = this.cfg.style === 'total' ? (this.cfg.period as Period | undefined) : undefined;
+      if (period) this.period = period;
       void this.loadAll();
     }
   }

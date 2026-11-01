@@ -376,12 +376,17 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
       .small .name {
         font-size: 19px;
       }
+      /* Temperatures match the energy card's value: 40px on 1×1, 52px on wide and tall, 64px on large. */
       .mid {
-        font-size: 48px;
+        font-size: 40px;
         font-weight: 600;
         letter-spacing: -0.035em;
         line-height: 1;
         margin-top: 12px;
+      }
+      :host([size='t']) .mid,
+      .wide .hero {
+        font-size: 52px;
       }
       .large .pad {
         padding: var(--_pad) var(--_pad) 0;
@@ -393,7 +398,7 @@ export class HomeViewThermostatCard extends HomeViewCard<ThermostatCardConfig> {
         margin-top: 6px;
       }
       .huge {
-        font-size: 96px;
+        font-size: 64px;
         font-weight: 600;
         letter-spacing: -0.045em;
         line-height: 0.9;

@@ -38,8 +38,10 @@ import { actionsSection, appearanceSection, choose, editorFor, layoutSection, ty
 import './energy-devices-editor';
 
 export interface EnergyCardConfig extends BaseCardConfig {
-  /** A: live power over a threshold-coloured sparkline. B: where it's going now. C: today's total first. */
+  /** A: live power over a threshold-coloured sparkline. B: where it's going now. C: the energy used so far. */
   style?: 'threshold' | 'distribution' | 'total';
+  /** Style C: the energy used today, this week or this month. */
+  period?: EnergyPeriod;
   /** A single power sensor to use instead of the Energy dashboard's grid/solar/battery power. */
   power_entity?: string;
   /** Count the whole home (grid + solar + battery) or the grid only. */
@@ -53,6 +55,8 @@ export interface EnergyCardConfig extends BaseCardConfig {
   /** Rename, recolour, hide or exclude Energy dashboard devices. */
   devices?: DeviceOverride[];
 }
+
+export type EnergyPeriod = 'day' | 'week' | 'month';
 
 export interface DeviceNow {
   name: string;
@@ -81,7 +85,8 @@ const EDITOR: EditorSpec = {
   schema: (c) => {
     const style = c.style ?? 'threshold';
     return [
-      { name: 'style', selector: choose([['threshold', 'A: live power over a sparkline'], ['distribution', 'B: where the power is going now'], ['total', "C: today's energy first"]], 'list') },
+      { name: 'style', selector: choose([['threshold', 'A: live power over a sparkline'], ['distribution', 'B: where the power is going now'], ['total', 'C: energy used so far']], 'list') },
+      ...(style === 'total' ? [{ name: 'period', selector: choose([['day', 'Today'], ['week', 'This week'], ['month', 'This month']]) }] : []),
       { name: 'name', selector: { text: {} } },
       { name: 'power_entity', selector: { entity: { domain: 'sensor', device_class: 'power' } } },
       ...(!c.power_entity ? [{ name: 'total_mode', selector: choose([['home', 'Whole home (grid, solar and battery)'], ['grid', 'Grid only']]) }] : []),
@@ -120,13 +125,14 @@ const EDITOR: EditorSpec = {
       layoutSection,
     ];
   },
-  labels: { style: 'Style', power_entity: 'Power sensor', total_mode: 'Count', hours: 'Graph covers', points_per_hour: 'Graph points', y_max: 'Graph top', thresholds: 'Power colours' },
+  labels: { style: 'Style', period: 'Period', power_entity: 'Power sensor', total_mode: 'Count', hours: 'Graph covers', points_per_hour: 'Graph points', y_max: 'Graph top', thresholds: 'Power colours' },
   helpers: {
     power_entity: 'Leave empty to use the power sensors set up in the Energy dashboard',
     thresholds: 'The line takes each colour from that power upwards. Defaults: green, amber from 1.5 kW, red from 4 kW',
     tap_action: 'Default: opens the energy pop-up',
     points_per_hour: 'Empty: one point every two pixels',
     y_max: 'Empty: scales to the peak',
+    period: 'Also the period the pop-up opens on',
   },
   custom: (hass, config, set) =>
     html`<homeview-energy-devices-editor .hass=${hass} .config=${config} @devices-changed=${(e: CustomEvent<DeviceOverride[] | undefined>) => set({ ...config, devices: e.detail })}></homeview-energy-devices-editor>`,
@@ -144,13 +150,15 @@ const EDITOR: EditorSpec = {
 export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
   @state() private prefs?: EnergyPrefs;
   @state() private spark: Array<number | null> = [];
+  /** Style C: the period so far, the last period up to the same point (for the comparison) and in full. */
+  @state() private sofar?: number;
+  @state() private sameLast?: number;
+  @state() private lastFull?: number;
   @state() private today?: number;
-  /** Yesterday up to the same time of day, for the comparison. */
-  @state() private yesterday?: number;
-  @state() private yesterdayFull?: number;
   @state() private week?: number;
   @state() private month?: number;
-  @state() private hourly: number[] = [];
+  /** One bar per hour (day) or per day (week, month). */
+  @state() private bars: number[] = [];
   @state() private error?: string;
   private refresh?: number;
   private sparkEnd = Date.now();
@@ -225,27 +233,46 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
     if (this.prefs && style === 'total') {
       const stats = totalStats(hass, this.prefs, this.config);
       const now = new Date();
-      const day = startOfDay(now);
-      const yStart = new Date(day.getTime() - 86_400_000);
+      const { start, lastStart, buckets, stat } = this.periodRange(now);
+      const sameEnd = new Date(Math.min(start.getTime(), lastStart.getTime() + (now.getTime() - start.getTime())));
       try {
         const between = (a: Date, b: Date) => energyBetween(hass, stats, a, b);
-        [this.today, this.yesterday, this.yesterdayFull, this.week, this.month] = await Promise.all([
-          between(day, now),
-          between(yStart, new Date(now.getTime() - 86_400_000)),
-          between(yStart, day),
+        [this.sofar, this.sameLast, this.lastFull, this.today, this.week, this.month] = await Promise.all([
+          between(start, now),
+          between(lastStart, sameEnd),
+          between(lastStart, start),
+          between(startOfDay(now), now),
           between(startOfWeek(now, firstWeekday(hass)), now),
           between(startOfMonth(now), now),
         ]);
-        const buckets = Array.from({ length: 24 }, (_, h) => ({
-          start: new Date(day.getTime() + h * 3_600_000),
-          end: new Date(day.getTime() + (h + 1) * 3_600_000),
-        }));
-        const res = await fetchEnergyStats(hass, stats.map((s) => s.id), day, now, 'hour');
-        this.hourly = buckets.map((_, i) => Math.max(0, stats.reduce((n, s) => n + s.sign * bucketize(res[s.id], buckets)[i], 0)));
+        const res = await fetchEnergyStats(hass, stats.map((s) => s.id), start, now, stat);
+        this.bars = buckets.map((_, i) => Math.max(0, stats.reduce((n, s) => n + s.sign * bucketize(res[s.id], buckets)[i], 0)));
       } catch {
-        this.today = undefined;
+        this.sofar = undefined;
       }
     }
+  }
+
+  private get period(): EnergyPeriod {
+    return this.config.period ?? 'day';
+  }
+
+  /** The current period, the one before it, and its bars: hours of today, or days of the week or month. */
+  private periodRange(now: Date) {
+    const day = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+    const days = (from: Date, count: number) => Array.from({ length: count }, (_, i) => ({ start: day(from, i), end: day(from, i + 1) }));
+    if (this.period === 'week') {
+      const start = startOfWeek(now, firstWeekday(this.hass));
+      return { start, lastStart: day(start, -7), buckets: days(start, 7), stat: 'day' as const };
+    }
+    if (this.period === 'month') {
+      const start = startOfMonth(now);
+      const length = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate();
+      return { start, lastStart: new Date(start.getFullYear(), start.getMonth() - 1, 1), buckets: days(start, length), stat: 'day' as const };
+    }
+    const start = startOfDay(now);
+    const buckets = Array.from({ length: 24 }, (_, h) => ({ start: new Date(start.getTime() + h * 3_600_000), end: new Date(start.getTime() + (h + 1) * 3_600_000) }));
+    return { start, lastStart: day(start, -1), buckets, stat: 'hour' as const };
   }
 
   private get watts(): number | null {
@@ -390,35 +417,59 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
     `;
   }
 
-  // ---------------------------------------------------------------- C: today
+  // ---------------------------------------------------------------- C: so far
 
-  private renderToday(name: string) {
+  private renderSoFar(name: string) {
     const lang = this.hass!.locale.language;
+    const now = new Date();
     const kwh = (v: number | undefined) => html`${v != null ? formatEnergy(v, lang) : '—'}<span class="u">kWh</span>`;
-    const delta = this.today != null && this.yesterday ? ((this.today - this.yesterday) / this.yesterday) * 100 : undefined;
+    const period = this.period;
+    const last = { day: 'yesterday', week: 'last week', month: 'last month' }[period];
+    const delta = this.sofar != null && this.sameLast ? ((this.sofar - this.sameLast) / this.sameLast) * 100 : undefined;
     const vs =
       delta != null
-        ? html`<div class="ctx" style="color:${delta <= 0 ? 'var(--_energy-ink)' : 'var(--hv-c-notice)'}">${delta <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(delta))}% vs yesterday</div>`
+        ? html`<div class="ctx" style="color:${delta <= 0 ? 'var(--_energy-ink)' : 'var(--hv-c-notice)'}">${delta <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(delta))}% vs ${last}</div>`
         : nothing;
-    const monthName = new Intl.DateTimeFormat(lang, { month: 'long' }).format(new Date());
-    let extra: unknown = nothing;
-    if (this.size === 't') extra = this.stats([[kwh(this.yesterdayFull), 'Yesterday'], [kwh(this.week), 'This week']]);
-    if (this.size === 'l') extra = this.stats([[kwh(this.yesterdayFull), 'Yesterday'], [kwh(this.week), 'This week'], [kwh(this.month), monthName]]);
-    const max = Math.max(0.1, ...this.hourly);
-    const nowHour = new Date().getHours();
-    const axis = this.size === 's' ? [] : this.size === 't' ? ['00', '12', '24'] : ['00', '06', '12', '18', '24'];
+    const monthName = (d: Date) => new Intl.DateTimeFormat(lang, { month: 'long' }).format(d);
+    const items: Array<[unknown, string]> =
+      period === 'week'
+        ? [[kwh(this.lastFull), 'Last week'], [kwh(this.today), 'Today'], [kwh(this.month), monthName(now)]]
+        : period === 'month'
+          ? [[kwh(this.lastFull), monthName(new Date(now.getFullYear(), now.getMonth() - 1, 1))], [kwh(this.week), 'This week'], [kwh(this.today), 'Today']]
+          : [[kwh(this.lastFull), 'Yesterday'], [kwh(this.week), 'This week'], [kwh(this.month), monthName(now)]];
+    const extra = this.size === 't' ? this.stats(items.slice(0, 2)) : this.size === 'l' ? this.stats(items) : nothing;
+
+    const { buckets } = this.periodRange(now);
+    const current = buckets.findIndex((b) => now >= b.start && now < b.end);
+    const max = Math.max(0.1, ...this.bars);
     return html`
-      ${this.head(name, kwh(this.today), [vs])}
+      ${this.head(name, kwh(this.sofar), [vs])}
       ${extra}
       <div class="hours">
-        <div class="hbars">${Array.from({ length: 24 }, (_, i) => {
-          const v = this.hourly[i] ?? 0;
-          const bg = i === nowHour ? 'var(--hv-c-energy)' : i < nowHour ? 'rgba(76,208,125,.6)' : 'var(--_track)';
-          return html`<div style="height:${i <= nowHour ? Math.max(5, (v / max) * 100) : 5}%;background:${bg}"></div>`;
+        <div class="hbars ${period}">${buckets.map((_, i) => {
+          const v = this.bars[i] ?? 0;
+          const bg = i === current ? 'var(--hv-c-energy)' : i < current ? 'rgba(76,208,125,.6)' : 'var(--_track)';
+          return html`<div style="height:${i <= current ? Math.max(5, (v / max) * 100) : 5}%;background:${bg}"></div>`;
         })}</div>
-        ${axis.length ? html`<div class="axis">${axis.map((a) => html`<span>${a}</span>`)}</div>` : nothing}
+        ${this.size === 's' ? nothing : this.axis(buckets.map((b) => b.start))}
       </div>
     `;
+  }
+
+  /** Hours along the day's edges; under a week or month, labels centred on their own bars. */
+  private axis(starts: Date[]) {
+    const period = this.period;
+    if (period === 'day') {
+      const marks = this.size === 't' ? ['00', '12', '24'] : ['00', '06', '12', '18', '24'];
+      return html`<div class="axis">${marks.map((a) => html`<span>${a}</span>`)}</div>`;
+    }
+    const n = starts.length;
+    const weekday = new Intl.DateTimeFormat(this.hass!.locale.language, { weekday: this.size === 't' ? 'narrow' : 'short' });
+    const marks =
+      period === 'week'
+        ? starts.map((d, i) => [i, weekday.format(d)] as const)
+        : (this.size === 't' ? [0, 14, n - 1] : [0, 7, 14, 21, n - 1]).map((i) => [i, String(i + 1)] as const);
+    return html`<div class="axis centred">${marks.map(([i, label]) => html`<span style="left:${((i + 0.5) / n) * 100}%">${label}</span>`)}</div>`;
   }
 
   render() {
@@ -429,13 +480,12 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
       return html`<ha-card class="tile"><div class="in"><ha-icon icon="mdi:lightning-bolt"></ha-icon><div class="sub wrap">${this.error}</div></div></ha-card>`;
     }
     const p = w != null ? formatPower(w, this.hass.locale.language) : { value: '—', unit: '' };
-    const name =
-      this.config.name ??
-      (style === 'distribution' ? 'Using now' : style === 'total' ? (this.wide ? 'Energy today' : 'Today') : 'Power');
+    const soFarName = { day: this.wide ? 'Energy today' : 'Today', week: 'This week', month: 'This month' }[this.period];
+    const name = this.config.name ?? (style === 'distribution' ? 'Using now' : style === 'total' ? soFarName : 'Power');
     const label =
-      style === 'total' && this.today != null ? `${name} ${formatEnergy(this.today, this.hass.locale.language)} kWh` : `${name} ${p.value} ${p.unit}`;
+      style === 'total' && this.sofar != null ? `${name} ${formatEnergy(this.sofar, this.hass.locale.language)} kWh` : `${name} ${p.value} ${p.unit}`;
     return html`<ha-card class="tile clickable energy ${style}" tabindex="0" role="button" aria-label=${label}>
-      ${style === 'distribution' ? this.renderDevices(w, name) : style === 'total' ? this.renderToday(name) : this.renderPower(w, name)}
+      ${style === 'distribution' ? this.renderDevices(w, name) : style === 'total' ? this.renderSoFar(name) : this.renderPower(w, name)}
     </ha-card>`;
   }
 
@@ -712,12 +762,27 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
         flex: 1;
         border-radius: 3px;
       }
+      .hbars.month {
+        gap: 2px;
+      }
+      :host([size='s']) .hbars.month {
+        gap: 1px;
+      }
       .axis {
         display: flex;
         justify-content: space-between;
         font-size: 13px;
         font-weight: 600;
         color: var(--_ink3);
+      }
+      .axis.centred {
+        position: relative;
+        height: 1.2em;
+      }
+      .axis.centred span {
+        position: absolute;
+        transform: translateX(-50%);
+        white-space: nowrap;
       }
       .wrap {
         white-space: normal;

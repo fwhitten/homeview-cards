@@ -138,7 +138,19 @@
       }
       if (msg.type === 'recorder/statistics_during_period') {
         const out = {};
-        for (const id of msg.statistic_ids) out[id] = series(30, (i) => ({ start: now - (30 - i) * 300e3, end: now - (29 - i) * 300e3, mean: id.includes('temp') ? 21 + Math.sin(i / 6) : 50 + Math.cos(i / 5) * 5, change: id === 'sensor.ev_energy' ? (msg.units?.energy === 'kWh' ? 0.1 : 100) : 0.3 }));
+        // One row per period across the asked range, as the recorder answers.
+        const step = { '5minute': 300e3, hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 30 * 86400e3 }[msg.period] ?? 300e3;
+        const from = Date.parse(msg.start_time);
+        const to = msg.end_time ? Date.parse(msg.end_time) : now;
+        const count = Math.max(1, Math.min(800, Math.ceil((to - from) / step)));
+        const scale = step / 3600e3;
+        for (const id of msg.statistic_ids)
+          out[id] = series(count, (i) => {
+            const t = from + i * step;
+            const hour = new Date(t).getHours();
+            const use = (0.25 + (hour >= 17 && hour <= 21 ? 0.6 : hour >= 7 && hour <= 9 ? 0.4 : 0)) * (1 + 0.3 * Math.sin(t / 86400e3));
+            return { start: t, end: t + step, mean: id.includes('temp') ? 21 + Math.sin(i / 6) : 50 + Math.cos(i / 5) * 5, change: id === 'sensor.ev_energy' ? (msg.units?.energy === 'kWh' ? 0.1 : 100) * scale : step >= 86400e3 ? 0.55 * scale * (1 + 0.3 * Math.sin(t / 86400e3)) : use * scale };
+          });
         return out;
       }
       throw new Error('not in demo: ' + msg.type);

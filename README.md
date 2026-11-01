@@ -283,6 +283,7 @@ play/pause, next, repeat, and mute.
 ```yaml
 type: custom:homeview-energy-card
 style: threshold     # threshold (A) | distribution (B) | total (C)
+period: day          # style C: day | week | month (the pop-up opens on it too)
 total_mode: home     # home | grid
 hours: 3
 points_per_hour: 60  # line resolution; empty = one point every two pixels
@@ -311,9 +312,11 @@ there to override one.
 
 All three styles share one layout: the label with its context underneath, the
 value top right on wide tiles (under the label on narrow ones), and the graph,
-device bar or hourly bars filling the rest. Taller and larger tiles add
-detail: average and lowest power, the device list, or yesterday, this week
-and this month. The pop-up shows
+device bar or energy bars filling the rest. Taller and larger tiles add
+detail: average and lowest power, the device list, or the previous period
+and the other periods so far. Style C shows today by the hour, or this week
+or this month by the day (`period`), compared with the same point in the
+last one. The power graph always starts at 0 W; only its top scales. The pop-up shows
 power now, today / this week / this month, and a per-device breakdown by day,
 week, month or year.
 
