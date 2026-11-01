@@ -2,6 +2,7 @@ import './popups/popup-host';
 import './popups/lights-popup';
 import './popups/energy-popup';
 import './popups/boiler-popup';
+import './popups/camera-popup';
 import './cards/light-card';
 import './cards/thermostat-card';
 import './cards/weather-card';

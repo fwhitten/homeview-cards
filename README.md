@@ -243,12 +243,21 @@ photo unless you set `color`.
 
 ```yaml
 type: custom:homeview-camera-card
-entity: camera.driveway
+entity: camera.driveway_sub         # the card's feed: a low-resolution stream suits a tile
+view: snapshot                      # live | snapshot
+stream_entity: camera.driveway_main # played when tapped; defaults to entity
+aspect_ratio: '16:9'                # the pop-up's shape
 events:
   - entity: binary_sensor.driveway_person_detected
     label: Person
     icon: mdi:account
 ```
+
+Tap opens HomeView's camera pop-up: the stream edge to edge, as large as the
+screen allows, playing straight away without player controls. The card's
+still shows until the first frame arrives. The LIVE badge, recent detections,
+a clock and a mute button sit over the picture. Hold still opens Home
+Assistant's more-info.
 
 ### Media
 

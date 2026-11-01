@@ -1,17 +1,13 @@
 import { css, html, nothing } from 'lit';
 import { state } from 'lit/decorators.js';
 import { HomeViewCard, type BaseCardConfig } from '../core/base-card';
-import type { GridOptions, HassEntity } from '../core/types';
+import type { GridOptions } from '../core/types';
+import { detections, ensureStreamElement, snapshotUrl, type CameraEvent } from '../core/camera';
 import { duration, isUnavailable, time } from '../core/format';
 import { defineElement, registerCard } from '../core/register';
 import { actionsSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
-export interface CameraEvent {
-  /** A binary_sensor or event entity that marks a detection. */
-  entity: string;
-  label?: string;
-  icon?: string;
-}
+export type { CameraEvent } from '../core/camera';
 
 export interface CameraCardConfig extends BaseCardConfig {
   entity: string;
@@ -24,23 +20,11 @@ export interface CameraCardConfig extends BaseCardConfig {
   event_window?: number;
   show_live_badge?: boolean;
   show_time?: boolean;
+  /** A higher-resolution camera for the pop-up a tap opens. Defaults to `entity`. */
+  stream_entity?: string;
+  /** The pop-up's shape, as the stream's width:height. Default 16:9. */
+  aspect_ratio?: string;
 }
-
-let streamLoader: Promise<unknown> | undefined;
-
-/**
- * Make sure HA's camera stream element is registered. It loads with the
- * picture-entity card, so creating one (never attached) pulls it in.
- */
-const ensureStreamElement = (): Promise<unknown> => {
-  if (customElements.get('ha-camera-stream')) return Promise.resolve();
-  streamLoader ??= (async () => {
-    const helpers = await window.loadCardHelpers?.();
-    helpers?.createCardElement({ type: 'picture-entity', entity: 'camera.homeview_loader', camera_view: 'live' });
-    await Promise.race([customElements.whenDefined('ha-camera-stream'), new Promise((r) => setTimeout(r, 5000))]);
-  })();
-  return streamLoader;
-};
 
 const EDITOR: EditorSpec = {
   schema: (c) => [
@@ -62,13 +46,27 @@ const EDITOR: EditorSpec = {
         },
       },
     },
+    {
+      type: 'expandable',
+      name: '',
+      title: 'Pop-up',
+      icon: 'mdi:arrow-expand',
+      schema: [
+        { name: 'stream_entity', selector: { entity: { domain: 'camera' } } },
+        { name: 'aspect_ratio', selector: choose([['16:9', '16:9'], ['4:3', '4:3'], ['3:2', '3:2'], ['1:1', 'Square'], ['9:16', '9:16 (portrait)']]) },
+      ],
+    },
     ...(c.events?.length ? [{ name: 'event_window', selector: { number: { min: 1, max: 1440, mode: 'box', unit_of_measurement: 'min' } } }] : []),
     { type: 'grid', name: '', schema: [{ name: 'show_live_badge', selector: { boolean: {} } }, { name: 'show_time', selector: { boolean: {} } }] },
     actionsSection(),
     layoutSection,
   ],
-  labels: { entity: 'Camera', view: 'Feed', refresh: 'Refresh every', events: 'Detections', event_window: 'Show detections from the last', show_live_badge: 'LIVE badge', show_time: 'Clock' },
-  helpers: { tap_action: 'Default: more-info, which opens the full-screen stream', events: 'The most recent one shows in a chip on the feed' },
+  labels: { entity: 'Camera', stream_entity: 'Stream in the pop-up', aspect_ratio: 'Pop-up shape', view: 'Feed', refresh: 'Refresh every', events: 'Detections', event_window: 'Show detections from the last', show_live_badge: 'LIVE badge', show_time: 'Clock' },
+  helpers: {
+    tap_action: "Default: opens HomeView's camera pop-up. Hold opens Home Assistant's more-info",
+    events: 'The most recent one shows in a chip on the feed',
+    stream_entity: 'A higher-resolution camera (often the main stream) to play when tapped. Empty: the card\'s camera',
+  },
 };
 
 /** Camera (design A): full-bleed feed, LIVE badge, and the latest detection in a glass chip. */
@@ -98,6 +96,10 @@ export class HomeViewCameraCard extends HomeViewCard<CameraCardConfig> {
     return [this.config.entity, ...(this.config.events ?? []).map((e) => e.entity)];
   }
 
+  protected popupName(): string {
+    return 'camera';
+  }
+
   connectedCallback(): void {
     super.connectedCallback();
     if (this.config?.view !== 'snapshot' && !this.streamReady) {
@@ -113,29 +115,6 @@ export class HomeViewCameraCard extends HomeViewCard<CameraCardConfig> {
     this.timers = [];
   }
 
-  private latestEvent(): { ev: CameraEvent; st: HassEntity; ago: number } | undefined {
-    const windowMs = (this.config.event_window ?? 30) * 60_000;
-    let best: { ev: CameraEvent; st: HassEntity; ago: number } | undefined;
-    for (const ev of this.config.events ?? []) {
-      const st = this.stateObj(ev.entity);
-      if (!st || isUnavailable(st)) continue;
-      // An event entity's state is the time it last fired; a binary sensor counts while on or recently on.
-      const at = ev.entity.startsWith('event.') ? Date.parse(st.state) : Date.parse(st.last_changed);
-      if (!Number.isFinite(at)) continue;
-      if (ev.entity.startsWith('binary_sensor.') && st.state !== 'on' && Date.now() - at > windowMs) continue;
-      const ago = Date.now() - at;
-      if (ago > windowMs) continue;
-      if (!best || ago < best.ago) best = { ev, st, ago };
-    }
-    return best;
-  }
-
-  private snapshotUrl(st: HassEntity): string {
-    const pic = st.attributes.entity_picture as string | undefined;
-    if (!pic) return '';
-    return `${this.hass!.hassUrl(pic)}${pic.includes('?') ? '&' : '?'}t=${this.snapshotTick}`;
-  }
-
   render() {
     if (!this.hass) return nothing;
     const st = this.stateObj();
@@ -149,13 +128,13 @@ export class HomeViewCameraCard extends HomeViewCard<CameraCardConfig> {
       </ha-card>`;
     }
     const live = this.config.view !== 'snapshot' && this.streamReady;
-    const event = this.latestEvent();
+    const event = detections(this.hass, this.config.events, this.config.event_window ?? 30)[0];
     const small = this.size === 's';
     return html`
       <ha-card class="tile cam ${this.clickable ? 'clickable' : ''}" tabindex="0" role="button" aria-label="${name} camera">
         ${live
-          ? html`<ha-camera-stream class="feed" .hass=${this.hass} .stateObj=${st} muted .controls=${false} fit-mode="cover"></ha-camera-stream>`
-          : html`<img class="feed" src=${this.snapshotUrl(st)} alt="" />`}
+          ? html`<ha-camera-stream class="feed" .hass=${this.hass} .stateObj=${st} muted .controls=${false} .fitMode=${'cover'}></ha-camera-stream>`
+          : html`<img class="feed" src=${snapshotUrl(this.hass, st, this.snapshotTick)} alt="" />`}
         <div class="scan" aria-hidden="true"></div>
         <div class="fade top" aria-hidden="true"></div>
         <div class="fade bottom" aria-hidden="true"></div>

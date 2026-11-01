@@ -7,6 +7,13 @@ import type { HomeAssistant } from '../core/types';
 import { defineElement } from '../core/register';
 import { prefersReducedMotion } from '../core/events';
 
+/** A pop-up's content class can ask for `media`: edge to edge, sized to its aspect ratio, title over the picture. */
+interface PopupContentClass {
+  layout?: 'sheet' | 'media';
+  /** Width ÷ height of a media pop-up, from the opening card's config. */
+  aspectFor?(config: Record<string, unknown>): number;
+}
+
 export interface PopupContentElement extends HTMLElement {
   hass?: HomeAssistant;
   props?: PopupProps;
@@ -30,6 +37,8 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
   private content?: PopupContentElement;
   private unsub?: () => void;
   private pushed = false;
+  /** Marks the history entry this opening pushed, so entries left over from a reload aren't mistaken for it. */
+  private token = '';
 
   show(name: string, props: PopupProps): void {
     this.name = name;
@@ -37,14 +46,15 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
     this.hass = store.hass;
     this.open = true;
     if (!this.pushed) {
-      history.pushState({ ...(history.state ?? {}), homeviewPopup: name }, '');
+      this.token = `${name}:${Date.now()}`;
+      history.pushState({ ...(history.state ?? {}), homeviewPopup: this.token }, '');
       this.pushed = true;
     }
   }
 
   close(): void {
     if (!this.open) return;
-    if (this.pushed && history.state?.homeviewPopup) {
+    if (this.pushed && history.state?.homeviewPopup === this.token) {
       history.back();
       return;
     }
@@ -63,7 +73,7 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
   }
 
   private onPop = (): void => {
-    if (this.open && !history.state?.homeviewPopup) {
+    if (this.open && history.state?.homeviewPopup !== this.token) {
       this.pushed = false;
       this.dismiss();
     }
@@ -115,9 +125,12 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
 
   render() {
     if (!this.name) return nothing;
+    const kind = customElements.get(popupTag(this.name)) as PopupContentClass | undefined;
+    const media = kind?.layout === 'media';
+    const aspect = media ? kind?.aspectFor?.(this.props?.config ?? {}) ?? 16 / 9 : undefined;
     return html`
       <div class="scrim" @click=${() => this.close()}></div>
-      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="hv-popup-title">
+      <section class="sheet ${media ? 'media' : ''}" style=${aspect ? `--_aspect:${aspect}` : ''} role="dialog" aria-modal="true" aria-labelledby="hv-popup-title">
         <header>
           <div class="heading">
             <h2 class="title" id="hv-popup-title"></h2>
@@ -237,6 +250,50 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
       .body {
         min-height: 0;
       }
+      /* Media: the picture fills the sheet edge to edge, at its own aspect ratio, as large as the screen allows. */
+      .sheet.media {
+        width: min(1600px, calc(100vw - 48px), calc((100vh - 48px) * var(--_aspect)));
+        width: min(1600px, calc(100vw - 48px), calc((100dvh - 48px) * var(--_aspect)));
+        aspect-ratio: var(--_aspect);
+        max-height: none;
+        padding: 0;
+        gap: 0;
+        overflow: hidden;
+        background: #000;
+        color: #fff;
+      }
+      .sheet.media header {
+        position: absolute;
+        z-index: 2;
+        top: 0;
+        left: 0;
+        right: 0;
+        padding: 22px 22px 48px 28px;
+        background: linear-gradient(rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+        pointer-events: none;
+      }
+      .sheet.media header > * {
+        pointer-events: auto;
+      }
+      .sheet.media .title {
+        font-size: 26px;
+        text-shadow: 0 1px 8px rgba(0, 0, 0, 0.4);
+      }
+      .sheet.media .subtitle {
+        color: rgba(255, 255, 255, 0.8);
+      }
+      .sheet.media .close {
+        width: 48px;
+        height: 48px;
+        color: #fff;
+        background: rgba(20, 20, 24, 0.45);
+        -webkit-backdrop-filter: blur(12px);
+        backdrop-filter: blur(12px);
+      }
+      .sheet.media .body {
+        position: absolute;
+        inset: 0;
+      }
       @media (max-width: 700px) {
         :host {
           place-items: end center;
@@ -246,6 +303,10 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
           max-height: 92vh;
           border-radius: 32px 32px 0 0;
           padding: 22px 18px 28px;
+        }
+        .sheet.media {
+          width: 100vw;
+          padding: 0;
         }
       }
       @media (prefers-reduced-motion: reduce) {
