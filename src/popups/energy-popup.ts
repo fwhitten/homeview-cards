@@ -157,9 +157,9 @@ export class HomeViewEnergyPopup extends PopupContent {
     const elapsedMonth = now.getTime() - month.getTime();
     const monthName = new Intl.DateTimeFormat(this.hass.locale.language, { month: 'long' });
     const ranges = [
-      { label: 'Today', start: day, prevStart: new Date(day.getTime() - 86_400_000), vs: 'vs yesterday', span: now.getTime() - day.getTime() },
-      { label: 'This week', start: week, prevStart: new Date(week.getTime() - 7 * 86_400_000), vs: 'vs last week', span: now.getTime() - week.getTime() },
-      { label: monthName.format(now), start: month, prevStart: lastMonth, vs: `vs ${monthName.format(lastMonth)}`, span: elapsedMonth },
+      { label: 'Today', start: day, prevStart: new Date(day.getTime() - 86_400_000), vs: 'yesterday', span: now.getTime() - day.getTime() },
+      { label: 'This week', start: week, prevStart: new Date(week.getTime() - 7 * 86_400_000), vs: 'last week', span: now.getTime() - week.getTime() },
+      { label: monthName.format(now), start: month, prevStart: lastMonth, vs: `in ${monthName.format(lastMonth)}`, span: elapsedMonth },
     ];
     this.sofar = await Promise.all(
       ranges.map(async (r) => {
@@ -340,7 +340,7 @@ export class HomeViewEnergyPopup extends PopupContent {
             return html`<div class="sf">
               <div class="sfl">${r.label}</div>
               <div class="sfv"><b>${r.value != null ? formatEnergy(r.value, lang) : '—'}</b><u>kWh</u></div>
-              ${d != null ? html`<div class="sfd" style="color:${d <= 0 ? 'var(--_energy-ink)' : 'var(--hv-c-notice)'}">${d <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(d))}% ${r.vs}</div>` : nothing}
+              ${d != null ? html`<div class="sfd" style="color:${d <= 0 ? 'var(--_energy-ink)' : 'var(--hv-c-notice)'}">${d <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(d))}% vs ${formatEnergy(r.previous!, lang)} kWh ${r.vs}</div>` : nothing}
             </div>`;
           })}</div>
         </div>
@@ -350,7 +350,9 @@ export class HomeViewEnergyPopup extends PopupContent {
         <div class="uhead">
           <div class="reading">
             <span class="mid">${b ? formatEnergy(b.total, lang) : '—'}</span><span class="unit">kWh</span>
-            ${cmp != null ? html`<span class="sub cmp">${cmp <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(cmp))}% vs ${{ day: 'yesterday', week: 'last week', month: 'last month', year: 'last year' }[this.period]}</span>` : nothing}
+            ${cmp != null ? html`<span class="sub cmp">${cmp <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(cmp))}% vs ${formatEnergy(b!.previous!, lang)} kWh ${this.offset === 0
+                    ? { day: 'yesterday', week: 'last week', month: 'last month', year: 'last year' }[this.period]
+                    : `the ${this.period} before`}</span>` : nothing}
           </div>
           <div class="controls">
             <button class="round nav gl" aria-label="Previous period" @click=${() => this.shift(-1)}><ha-icon icon="mdi:chevron-left"></ha-icon></button>

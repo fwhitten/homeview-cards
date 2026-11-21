@@ -313,6 +313,8 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
         overflow: auto;
         overscroll-behavior: contain;
         -webkit-overflow-scrolling: touch;
+        /* No scroll bar: the sheet's content scrolls under a finger without one. */
+        scrollbar-width: none;
         background: radial-gradient(120% 60% at 0% 0%, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 50%),
           var(--hv-popup-background, rgba(30, 32, 44, 0.58));
         box-shadow: inset 1.5px 1.5px 0 rgba(255, 255, 255, 0.35), inset -1px -1px 0 rgba(255, 255, 255, 0.12),
@@ -322,6 +324,11 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
         transform: translateY(24px) scale(0.98);
         opacity: 0;
         transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1), opacity 0.2s ease;
+      }
+      .sheet::-webkit-scrollbar {
+        display: none;
+        width: 0;
+        height: 0;
       }
       :host([mode='light']) .sheet {
         background: radial-gradient(120% 60% at 0% 0%, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0) 50%),
@@ -403,8 +410,16 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
         outline: 3px solid var(--_ink);
         outline-offset: 2px;
       }
+      /*
+       * The body keeps its full height and the sheet scrolls, so the sheet's
+       * bottom padding stays below the last panel. (A shrinking body let the
+       * content overflow past the padding.)
+       */
+      header {
+        flex: none;
+      }
       .body {
-        min-height: 0;
+        flex: none;
       }
       /* Media: the picture fills the sheet edge to edge, at its own aspect ratio, as large as the screen allows. */
       .sheet.media {

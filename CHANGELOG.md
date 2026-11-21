@@ -3,6 +3,19 @@
 Each release's section here is published as its release notes, which Home
 Assistant shows in the update dialog (Settings → Updates).
 
+## 0.4.11
+
+### Added
+- **Weather pop-up:** each day shows rain with a drop: the chance when the forecast gives one, otherwise the amount.
+
+### Changed
+- **Weather pop-up:** each day's temperature bar is coloured by its actual temperatures, blue when cold through to orange and red when warm.
+- **Energy pop-up:** each comparison says what it's against, e.g. "↑ 1335% vs 3.6 kWh yesterday", so a big swing (like an EV charging either side of midnight) can be checked at a glance.
+- **Pop-ups:** no scroll bars.
+
+### Fixed
+- **Pop-ups:** the gap below the last panel is back when a pop-up scrolls.
+
 ## 0.4.10
 
 ### Added

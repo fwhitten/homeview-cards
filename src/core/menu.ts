@@ -120,6 +120,7 @@ export class HomeViewMenu extends LitElement {
         box-sizing: border-box;
         width: 280px;
         overflow: auto;
+        scrollbar-width: none;
         padding: 8px;
         border-radius: 26px;
         background: var(--hv-popup-background, rgba(30, 32, 44, 0.72));
@@ -129,6 +130,9 @@ export class HomeViewMenu extends LitElement {
         opacity: 0;
         transform: scale(0.92);
         transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2), opacity 0.15s ease;
+      }
+      .menu::-webkit-scrollbar {
+        display: none;
       }
       :host([mode='light']) .menu {
         background: rgba(255, 255, 255, 0.75);

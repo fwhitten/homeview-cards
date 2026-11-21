@@ -59,6 +59,15 @@ export abstract class PopupContent extends LitElement {
         -webkit-backdrop-filter: none;
         backdrop-filter: none;
       }
+      /* No scroll bars on anything that scrolls inside a pop-up either. */
+      * {
+        scrollbar-width: none;
+      }
+      *::-webkit-scrollbar {
+        display: none;
+        width: 0;
+        height: 0;
+      }
       .panel {
         position: relative;
         box-sizing: border-box;
