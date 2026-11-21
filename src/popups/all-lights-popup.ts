@@ -40,6 +40,19 @@ export class HomeViewAllLightsPopup extends PopupContent {
     return on.length ? `${on.length} on in ${rooms} ${rooms === 1 ? 'room' : 'rooms'}` : 'All off';
   }
 
+  /**
+   * Whether a light belongs in the list: not excluded by name, and not a
+   * light group (a group helper lists its members in `entity_id`), unless
+   * the chip asks for groups.
+   */
+  private wanted = (id: string): boolean => {
+    const hass = this.hass!;
+    if (((this.cfg.exclude_entities as string[] | undefined) ?? []).includes(id)) return false;
+    if (this.cfg.include_groups) return true;
+    const st = hass.states[id];
+    return !(Array.isArray(st?.attributes.entity_id) || hass.entities?.[id]?.platform === 'group');
+  };
+
   private get groups(): Group[] {
     const hass = this.hass!;
     const only = this.cfg.areas as string[] | undefined;
@@ -47,16 +60,23 @@ export class HomeViewAllLightsPopup extends PopupContent {
       .filter((a) => !only?.length || only.includes(a.area_id))
       .sort((a, b) => (only?.length ? only.indexOf(a.area_id) - only.indexOf(b.area_id) : String(a.name).localeCompare(String(b.name))));
     const groups: Group[] = areas
-      .map((a) => ({ id: a.area_id, name: a.name, lights: entitiesInArea(hass, a.area_id, 'light'), scenes: entitiesInArea(hass, a.area_id, 'scene') }))
+      .map((a) => ({ id: a.area_id, name: a.name, lights: entitiesInArea(hass, a.area_id, 'light').filter(this.wanted), scenes: entitiesInArea(hass, a.area_id, 'scene') }))
       .filter((g) => g.lights.length);
-    if (!only?.length) {
-      // Lights with no area still belong somewhere.
+    if (!only?.length && this.cfg.include_unassigned) {
+      // Lights with no area, only when asked for.
       const loose = Object.values(hass.entities ?? {})
         .filter((e) => e.entity_id.startsWith('light.') && !e.hidden && !e.entity_category && hass.states[e.entity_id] && !areaOf(hass, e.entity_id))
-        .map((e) => e.entity_id);
+        .map((e) => e.entity_id)
+        .filter(this.wanted);
       if (loose.length) groups.push({ id: '', name: 'Other', lights: loose, scenes: [] });
     }
     return groups;
+  }
+
+  popupActions() {
+    if (!this.hass) return nothing;
+    const anyOn = this.groups.some((g) => g.lights.some((id) => this.isOn(id)));
+    return html`<button class="hbtn" ?disabled=${!anyOn} @click=${() => this.allOff()}><ha-icon icon="mdi:lightbulb-group-off-outline"></ha-icon>All off</button>`;
   }
 
   protected willUpdate(): void {
@@ -218,15 +238,17 @@ export class HomeViewAllLightsPopup extends PopupContent {
             const st = this.st(id);
             const name = String(st?.attributes.friendly_name ?? id).replace(new RegExp(`^${g.name}\\s+`, 'i'), '');
             const dimmable = supportsBrightness(st);
+            // Unavailable: Home Assistant has lost touch with it, though commands may still get through, so it stays usable.
+            const lost = !st || st.state === 'unavailable';
             return html`<homeview-slider
+              class=${lost ? 'lost' : ''}
               .mode=${this.mode}
               .label=${name}
               .value=${this.isOn(id) ? (dimmable ? this.level(id) : 100) : 0}
               .min=${0}
               .max=${100}
               .on=${this.isOn(id)}
-              .display=${dimmable ? undefined : 'On'}
-              ?disabled=${!st || st.state === 'unavailable'}
+              .display=${lost ? 'Unavailable' : dimmable ? undefined : 'On'}
               power
               .color=${this.fill(st)}
               @value-change=${(e: CustomEvent<number>) => this.setLight(id, dimmable ? e.detail : e.detail > 0 ? 100 : 0)}
@@ -241,13 +263,7 @@ export class HomeViewAllLightsPopup extends PopupContent {
     if (!this.hass) return nothing;
     const groups = this.groups;
     if (!groups.length) return html`<div class="panel sub">No lights found in any area.</div>`;
-    const anyOn = groups.some((g) => g.lights.some((id) => this.isOn(id)));
-    return html`
-      <div class="bar">
-        <button class="alloff gl" ?disabled=${!anyOn} @click=${() => this.allOff()}><ha-icon icon="mdi:lightbulb-group-off-outline"></ha-icon>All off</button>
-      </div>
-      <div class="areas">${groups.map((g) => this.area(g))}</div>
-    `;
+    return html`<div class="areas">${groups.map((g) => this.area(g))}</div>`;
   }
 
   static styles = [
@@ -258,37 +274,13 @@ export class HomeViewAllLightsPopup extends PopupContent {
         flex-direction: column;
         gap: 16px;
       }
-      .bar {
-        display: flex;
-        justify-content: flex-end;
-        margin-top: -6px;
-      }
-      .alloff {
-        position: relative;
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        height: 50px;
-        padding: 0 20px;
-        border: 0;
-        border-radius: 999px;
-        color: var(--_ink);
-        font: inherit;
-        font-size: 17px;
-        font-weight: 600;
-        cursor: pointer;
-        --mdc-icon-size: 22px;
-      }
-      .alloff[disabled] {
-        opacity: 0.4;
-        cursor: default;
-      }
       /* Two columns of rooms on a wide sheet, one on a narrow one. */
       .areas {
         columns: 2 420px;
         column-gap: 20px;
       }
       .area {
+        --_px: 24px;
         break-inside: avoid;
         display: flex;
         flex-direction: column;
@@ -315,12 +307,18 @@ export class HomeViewAllLightsPopup extends PopupContent {
       .master {
         --hv-slider-height: 68px;
       }
+      /* Scenes scroll sideways right out to the panel's edges, fading there, rather than stopping short inside the padding. */
       .scenes {
         display: flex;
         gap: 8px;
+        margin: 0 calc(-1 * var(--_px));
+        padding: 2px var(--_px);
+        scroll-padding: 0 var(--_px);
         overflow-x: auto;
         scrollbar-width: none;
         -webkit-overflow-scrolling: touch;
+        -webkit-mask-image: linear-gradient(90deg, transparent, #000 var(--_px), #000 calc(100% - var(--_px)), transparent);
+        mask-image: linear-gradient(90deg, transparent, #000 var(--_px), #000 calc(100% - var(--_px)), transparent);
       }
       .scenes::-webkit-scrollbar {
         display: none;
@@ -352,9 +350,15 @@ export class HomeViewAllLightsPopup extends PopupContent {
       .lights homeview-slider {
         --hv-slider-height: 56px;
       }
+      .lights homeview-slider.lost {
+        opacity: 0.55;
+      }
       @container (max-width: 520px) {
         .panel {
           padding: 16px;
+        }
+        .area {
+          --_px: 16px;
         }
         .areas {
           columns: 1;

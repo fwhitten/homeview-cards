@@ -26,6 +26,8 @@ export interface HomeViewViewConfig {
   ambient?: Omit<AmbientConfig, 'type'>;
   /** Same options as the HomeView notifications card. */
   notifications?: Record<string, unknown>;
+  /** Close pop-ups after this many seconds without a touch. Default 60; 0 keeps them open. */
+  popup_timeout?: number;
 }
 
 /** Where a card sits on one grid size. */
@@ -158,7 +160,7 @@ export class HomeViewView extends LitElement {
 
   setConfig(config: HomeViewViewConfig): void {
     this.config = { ...config };
-    store.setSettings({ appearance: config.appearance, night_entity: config.night_entity });
+    store.setSettings({ appearance: config.appearance, night_entity: config.night_entity, popup_timeout: config.popup_timeout });
     this.header = this.helper('homeview-chips-card', config.header ? { style: config.header.style ?? 'full', show_greeting: config.header.greeting ?? true, show_date: config.header.date ?? true, chips: config.header.chips ?? [] } : undefined, this.header);
     this.ambient = this.helper('homeview-ambient-card', config.ambient, this.ambient);
     this.notifier = this.helper('homeview-notification-card', config.notifications, this.notifier);
@@ -205,11 +207,11 @@ export class HomeViewView extends LitElement {
 
     requestAnimationFrame(() => {
       if (this.fitTries >= 6) return;
-      const pages = this.renderRoot.querySelector('.pages') as HTMLElement | null;
-      if (!pages) return;
+      const page = this.renderRoot.querySelector('.page') as HTMLElement | null;
+      if (!page) return;
       const sc = scrollerAbove(this);
       // How far the cards' bottom edge is from where it should be, and anything left to scroll.
-      const gap = viewport - (pages.getBoundingClientRect().bottom + (sc.scrollTop || 0));
+      const gap = viewport - (page.getBoundingClientRect().bottom + (sc.scrollTop || 0));
       const miss = Math.round(gap - PAD);
       const over = Math.round(sc.scrollHeight - sc.clientHeight);
       if (Math.abs(miss) <= 1 && over <= 0) return;
@@ -872,14 +874,18 @@ export class HomeViewView extends LitElement {
       font-weight: 600;
       color: rgba(255, 255, 255, 0.55);
     }
-    /* Screens sit side by side; native scroll snapping gives the swipe. */
+    /*
+     * Screens sit side by side; native scroll snapping gives the swipe. The
+     * scroller reaches down into the bottom margin (where the dots are), so
+     * the bottom row's shadows aren't cut off at the cards' edge.
+     */
     .pages {
       flex: 1;
       min-height: 0;
       display: flex;
       gap: 56px;
-      margin: 0 -28px;
-      padding: 0 28px;
+      margin: 0 -28px -28px;
+      padding: 0 28px 28px;
       overflow-x: auto;
       overflow-y: hidden;
       scroll-snap-type: x mandatory;

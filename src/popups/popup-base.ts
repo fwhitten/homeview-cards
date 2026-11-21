@@ -1,4 +1,4 @@
-import { LitElement, css } from 'lit';
+import { LitElement, css, nothing } from 'lit';
 import { property } from 'lit/decorators.js';
 import { base, tokens } from '../core/styles';
 import type { PopupProps } from '../core/popup-bus';
@@ -25,6 +25,19 @@ export abstract class PopupContent extends LitElement {
 
   popupSubtitle(): string {
     return '';
+  }
+
+  /** Buttons for the sheet's header, beside the close button. */
+  popupActions(): unknown {
+    return nothing;
+  }
+
+  constructor() {
+    super();
+    // After every render, let the host redraw the header from the new state.
+    this.addController({
+      hostUpdated: () => this.dispatchEvent(new CustomEvent('hv-popup-refresh', { bubbles: true, composed: true })),
+    });
   }
 
   static styles = [

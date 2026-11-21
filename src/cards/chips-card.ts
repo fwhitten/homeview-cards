@@ -62,8 +62,20 @@ export interface Chip extends Omit<ProgressSource, 'entity' | 'name' | 'icon' | 
   soc_entity?: string;
   target_soc_entity?: string;
   target_time_entity?: string;
+  /** EV pop-up: the car's actual battery level, shown between the initial and target charge. */
+  current_soc_entity?: string;
+  /** EV pop-up: the charge slots sensor (e.g. "22:00-23:01, 01:00-02:00"). */
+  slots_entity?: string;
+  /** EV pop-up: the charger's status, to animate the battery while charging. */
+  status_entity?: string;
   /** All-lights pop-up: only these areas (default: every area with a light). */
   areas?: string[];
+  /** All-lights pop-up: lights to leave out. */
+  exclude_entities?: string[];
+  /** All-lights pop-up: include light groups (left out by default, as their members are listed). */
+  include_groups?: boolean;
+  /** All-lights pop-up: include lights with no area, under "Other". */
+  include_unassigned?: boolean;
 }
 
 const isProgress = (c: Chip): boolean => c.type === 'progress';

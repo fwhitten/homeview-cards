@@ -1,4 +1,4 @@
-import { LitElement, css, html, nothing, type PropertyValues } from 'lit';
+import { LitElement, css, html, nothing, render, type PropertyValues } from 'lit';
 import { property, state } from 'lit/decorators.js';
 import { tokens } from '../core/styles';
 import { popupTag, type PopupHostElement, type PopupProps } from '../core/popup-bus';
@@ -21,6 +21,8 @@ export interface PopupContentElement extends HTMLElement {
   /** Title for the sheet header. */
   popupTitle?(): string;
   popupSubtitle?(): string;
+  /** Buttons for the header, beside the close button. */
+  popupActions?(): unknown;
 }
 
 /**
@@ -46,8 +48,38 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
   constructor() {
     super();
     this.addEventListener('context-request', this.forwardContext);
-    // Once someone touches a pop-up that opened by itself, it stays until they close it.
-    this.addEventListener('pointerdown', () => window.clearTimeout(this.autoTimer));
+    // Any touch, scroll or key restarts the idle countdown.
+    for (const type of ['pointerdown', 'pointermove', 'wheel', 'keydown']) this.addEventListener(type, this.activity, { passive: true });
+    this.addEventListener('scroll', this.activity, { capture: true, passive: true });
+    // Content asks for its title, subtitle and header buttons to be redrawn when it changes.
+    this.addEventListener('hv-popup-refresh', () => this.syncHeader());
+  }
+
+  /** Seconds of no interaction before the pop-up closes: the view's popup_timeout, default 60, 0 for never. */
+  private get idleMs(): number {
+    const s = store.settings.popup_timeout;
+    return (typeof s === 'number' && s >= 0 ? s : 60) * 1000;
+  }
+
+  private armIdle(ms: number): void {
+    window.clearTimeout(this.autoTimer);
+    if (ms > 0 && this.open) this.autoTimer = window.setTimeout(() => this.close(), ms);
+  }
+
+  private lastActivity = 0;
+  private activity = (): void => {
+    if (!this.open) return;
+    // pointermove fires constantly: re-arm at most once a second.
+    const now = Date.now();
+    if (now - this.lastActivity < 1000) return;
+    this.lastActivity = now;
+    this.armIdle(this.media ? 0 : this.idleMs);
+  };
+
+  /** A live camera isn't closed for want of a touch, unless it opened by itself. */
+  private get media(): boolean {
+    const kind = this.name ? (customElements.get(popupTag(this.name)) as PopupContentClass | undefined) : undefined;
+    return kind?.layout === 'media';
   }
 
   /**
@@ -74,12 +106,12 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
   };
 
   show(name: string, props: PopupProps): void {
-    window.clearTimeout(this.autoTimer);
-    if (props.autoClose) this.autoTimer = window.setTimeout(() => this.close(), props.autoClose);
     this.name = name;
     this.props = props;
     this.hass = store.hass;
     this.open = true;
+    this.lastActivity = 0;
+    this.armIdle(props.autoClose ?? (this.media ? 0 : this.idleMs));
     if (!this.pushed) {
       this.token = `${name}:${Date.now()}`;
       history.pushState({ ...(history.state ?? {}), homeviewPopup: this.token }, '');
@@ -155,10 +187,18 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
     this.content.hass = this.hass;
     this.content.props = this.props;
     this.content.mode = this.mode;
+    this.syncHeader();
+  }
+
+  private syncHeader(): void {
+    const c = this.content;
+    if (!c) return;
     const title = this.renderRoot.querySelector('.title');
     const sub = this.renderRoot.querySelector('.subtitle');
-    if (title) title.textContent = this.content.popupTitle?.() ?? '';
-    if (sub) sub.textContent = this.content.popupSubtitle?.() ?? '';
+    const actions = this.renderRoot.querySelector('.actions') as HTMLElement | null;
+    if (title) title.textContent = c.popupTitle?.() ?? '';
+    if (sub) sub.textContent = c.popupSubtitle?.() ?? '';
+    if (actions) render(c.popupActions?.() ?? nothing, actions);
   }
 
   render() {
@@ -174,6 +214,7 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
             <h2 class="title" id="hv-popup-title"></h2>
             <div class="subtitle"></div>
           </div>
+          <div class="actions"></div>
           <button class="close" aria-label="Close" @click=${() => this.close()}>
             <ha-icon icon="mdi:close"></ha-icon>
           </button>
@@ -286,6 +327,39 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
         cursor: pointer;
         --mdc-icon-size: 26px;
       }
+      .heading {
+        flex: 1;
+        min-width: 0;
+      }
+      .actions {
+        display: flex;
+        gap: 10px;
+      }
+      .actions:empty {
+        display: none;
+      }
+      /* A header button from the content (e.g. All off): a pill as tall as the close button. */
+      .hbtn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 56px;
+        padding: 0 22px;
+        border: 0;
+        border-radius: 999px;
+        background: var(--_glass-hi);
+        color: var(--_ink);
+        font: inherit;
+        font-size: 18px;
+        font-weight: 600;
+        cursor: pointer;
+        --mdc-icon-size: 22px;
+      }
+      .hbtn[disabled] {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .hbtn:focus-visible,
       .close:focus-visible {
         outline: 3px solid var(--_ink);
         outline-offset: 2px;

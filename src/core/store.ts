@@ -8,6 +8,8 @@ export interface GlobalSettings {
   appearance?: Appearance;
   /** Entity that turns night mode on: an input_boolean/binary_sensor (`on`) or `sun.sun` (below horizon). */
   night_entity?: string;
+  /** Seconds without a touch before a pop-up closes. Default 60; 0 keeps them open. */
+  popup_timeout?: number;
 }
 
 type Listener = () => void;

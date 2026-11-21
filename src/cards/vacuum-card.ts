@@ -18,6 +18,10 @@ export interface VacuumCardConfig extends BaseCardConfig {
   areas?: string[];
   /** The map for the pop-up: an image or camera entity. Empty: the one on the vacuum's device, if any. */
   map_entity?: string;
+  /** Pop-up: time left on the current run. Empty: a sensor on the vacuum's device named for it. */
+  remaining_entity?: string;
+  /** Pop-up: the selects to offer (mode, mop humidity…). Empty: every select on the vacuum's device. */
+  select_entities?: string[];
 }
 
 /** VacuumEntityFeature bits from Home Assistant core. */
@@ -41,14 +45,18 @@ const EDITOR: EditorSpec = {
     { name: 'battery_entity', selector: { entity: { domain: 'sensor', device_class: 'battery' } } },
     { name: 'areas', selector: { area: { multiple: true } } },
     { name: 'map_entity', selector: { entity: { domain: ['image', 'camera'] } } },
+    { name: 'remaining_entity', selector: { entity: { domain: 'sensor' } } },
+    { name: 'select_entities', selector: { entity: { domain: ['select', 'input_select'], multiple: true } } },
     appearanceSection,
     actionsSection(),
     layoutSection,
   ],
-  labels: { entity: 'Vacuum', battery_entity: 'Battery sensor', areas: 'Areas to offer', map_entity: 'Map' },
+  labels: { entity: 'Vacuum', battery_entity: 'Battery sensor', areas: 'Areas to offer', map_entity: 'Map', remaining_entity: 'Time remaining', select_entities: 'Modes and settings' },
   helpers: {
     areas: 'Areas mapped to the vacuum in its entity settings (Map vacuum segments to areas). Style B and the pop-up offer them',
     map_entity: "Shown in the pop-up. Empty: the image or camera on the vacuum's device, if it has one",
+    remaining_entity: "Shown while cleaning. Empty: found on the vacuum's device",
+    select_entities: "Offered in the pop-up, such as mode and mop humidity. Empty: every select on the vacuum's device",
     tap_action: 'Default: opens the vacuum pop-up',
   },
 };

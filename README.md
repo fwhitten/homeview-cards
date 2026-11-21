@@ -102,6 +102,7 @@ views:
       dark: /local/homeview/wall-dusk.jpg
       light: /local/homeview/wall-day.jpg
     night_entity: sun.sun
+    popup_timeout: 60    # pop-ups close after this many seconds untouched; 0 = never
     header:
       greeting: true     # "Good morning"
       date: true         # can be turned off separately
@@ -400,6 +401,8 @@ style: areas                       # status (A) | areas (B)
 battery_entity: sensor.robot_battery
 areas: [kitchen, hallway, living_room]
 map_entity: image.robot_map        # optional: found on the vacuum's device
+remaining_entity: sensor.robot_time_left   # optional: found on the device
+select_entities: [select.robot_mode]       # optional: every select on the device
 ```
 
 Uses the standard vacuum entity: start, pause, stop, return to dock, locate,
@@ -407,12 +410,14 @@ suction (`fan_speed_list`) and `vacuum.clean_area`. For areas, first map the
 vacuum's segments to Home Assistant areas (vacuum entity settings → **Map
 vacuum segments to areas**).
 
-Tap opens the vacuum pop-up: the state, battery and suction; big controls
-(clean or pause, stop, dock, spot clean, locate, as the vacuum supports);
-cleaning by area; the map, from an image or camera entity on the vacuum's
-device (or `map_entity`); and, from the device's other sensors, the last
-clean (area, time) and the parts that wear out (filter, brushes, mop, sensors),
-with bars for the ones reported as a percentage.
+Tap opens the vacuum pop-up: the state, battery, suction and time left; big
+controls (clean or pause, stop, dock, spot clean, locate, as the vacuum
+supports); cleaning by area; the device's modes and settings (its selects,
+such as mode and mop humidity); the map, from an image or camera entity on
+the vacuum's device (or `map_entity`), filling its side of the sheet; and,
+from the device's other sensors, the last clean (area, time) and the parts
+that wear out (filter, brushes, mop, sensors), with bars for the ones
+reported as a percentage.
 
 ### Agenda
 
@@ -506,16 +511,29 @@ chips:
 A chip for a `select` or `input_select` (a heating mode, say) opens a small
 menu of its options on tap, with the current one ticked; pick one to set it.
 
-`popup: ev` opens EV charger controls: the vehicle, the battery's charge now
-and the charge target (wide sliders with ± buttons), and the ready-by time
-(hour and 15-minute steppers, with quick picks). They're found on the same
-device as the chip's entity, so an Ohme charger works as it is; otherwise set
-`vehicle_entity`, `soc_entity`, `target_soc_entity` and `target_time_entity`.
+`popup: ev` opens EV charger controls. One battery shows the charge the car
+started at, what's been added (if `current_soc_entity` gives the car's actual
+level), and the target, striped; drag the white Initial and Target handles,
+or use the ± steppers beneath. Light runs along the charged part while the
+charger's status is `charging`. Below it: the charge slots on a noon-to-noon
+timeline, the ready-by time (hour and 15-minute steppers, with quick picks)
+and the vehicle. Everything is found on the same device as the chip's
+entity, so an Ohme charger works as it is; otherwise set `vehicle_entity`,
+`soc_entity` (initial), `target_soc_entity`, `target_time_entity`,
+`slots_entity` and `status_entity`.
 
-`popup: all-lights` opens every light grouped by area (or just `areas:`).
-Each area has a dimmer for all of its lights that keeps their brightness in
-proportion, its scenes, and a dimmer per light; every dimmer has a power
-button inside it.
+`popup: all-lights` opens every light grouped by area. Each area has a
+dimmer for all of its lights that keeps their brightness in proportion, its
+scenes, and a dimmer per light; every dimmer has a power button inside it,
+and **All off** sits in the header. Lights with no area and light groups
+(group helpers) are left out by default. To choose what's shown:
+
+| Option | |
+| --- | --- |
+| `areas` | Only these areas, in this order |
+| `exclude_entities` | Lights to leave out |
+| `include_groups` | Show light groups too |
+| `include_unassigned` | Show lights with no area, under Other |
 
 ```yaml
   - entity: sensor.ohme_status

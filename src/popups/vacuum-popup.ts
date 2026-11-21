@@ -22,6 +22,8 @@ const LABEL: Record<string, string> = {
 
 /** Parts that wear out, by name: brushes, filters, mops, sensors. */
 const MAINTENANCE = /filter|brush|mop|pad|strainer|dirty|consumable|dust ?bag/i;
+/** Time left on the current run. */
+const REMAINING = /remaining|time ?left|left ?time/i;
 /** The last (or current) run: how much, how long. */
 const LAST_RUN = /(clean(ing)?|last).*(area|time|duration)|(area|time|duration).*clean/i;
 
@@ -77,6 +79,27 @@ export class HomeViewVacuumPopup extends PopupContent {
     return this.cfg.map_entity ?? this.siblings.find((id) => id.startsWith('image.') || id.startsWith('camera.'));
   }
 
+  /** Time left on the current run: `remaining_entity`, or a device sensor named for it (not a part's life left). */
+  private get remaining(): HassEntity | undefined {
+    const id =
+      this.cfg.remaining_entity ??
+      this.siblings.find((s) => {
+        const name = `${this.st(s)?.attributes.friendly_name ?? ''} ${s}`;
+        return s.startsWith('sensor.') && REMAINING.test(name) && !MAINTENANCE.test(name);
+      });
+    const st = this.st(id);
+    return st && !isUnavailable(st) ? st : undefined;
+  }
+
+  /** The device's selects (mode, mop humidity…), mode first. Suction stays on its own control. */
+  private get selects(): string[] {
+    const own = this.cfg.select_entities as string[] | undefined;
+    if (own?.length) return own;
+    return this.siblings
+      .filter((s) => (s.startsWith('select.') || s.startsWith('input_select.')) && !/suction|fan.?speed/i.test(`${s} ${this.st(s)?.attributes.friendly_name ?? ''}`))
+      .sort((a, b) => Number(!/mode/i.test(a)) - Number(!/mode/i.test(b)));
+  }
+
   private get battery(): number | undefined {
     const id = this.cfg.battery_entity ?? this.siblings.find((s) => this.st(s)?.attributes.device_class === 'battery');
     return id ? numericState(this.st(id)) : numericState(this.st(this.entity), 'battery_level');
@@ -115,7 +138,11 @@ export class HomeViewVacuumPopup extends PopupContent {
     const b = this.battery;
     const fan = st.attributes.fan_speed as string | undefined;
     const charging = s === 'docked' && b != null && b < 100;
-    const note = error ? (st.attributes.status as string | undefined) ?? 'Check the vacuum' : charging ? 'Charging' : fan ? `${cap(fan)} suction` : '';
+    const left = this.remaining;
+    const leftText = left && Number(left.state) !== 0 && (cleaning || s === 'paused' || s === 'returning') ? `${this.hass!.formatEntityState(left)} left` : '';
+    const note = error
+      ? (st.attributes.status as string | undefined) ?? 'Check the vacuum'
+      : [leftText, charging ? 'Charging' : fan ? `${cap(fan)} suction` : ''].filter(Boolean).join(' · ');
     return html`<div class="panel vhero ${error ? 'err' : ''}">
       <span class="robot ${cleaning ? 'on' : ''}"><ha-icon class=${cleaning ? 'anim spin' : ''} icon="mdi:robot-vacuum"></ha-icon></span>
       <div class="htext">
@@ -155,7 +182,10 @@ export class HomeViewVacuumPopup extends PopupContent {
     const areas = (this.cfg.areas as string[] | undefined) ?? [];
     if (!areas.length || !has(st, F.CLEAN_AREA)) return nothing;
     return html`<div class="block">
-      <div class="bhead"><h3 class="sec">Clean by area</h3>${this.picked.length ? html`<button class="link" @click=${() => (this.picked = [])}>Clear</button>` : nothing}</div>
+      <div class="bhead">
+        <h3 class="sec">Clean by area</h3>
+        <button class="link" style="visibility:${this.picked.length ? 'visible' : 'hidden'}" ?disabled=${!this.picked.length} @click=${() => (this.picked = [])}>Clear</button>
+      </div>
       <div class="pills">${areas.map((a) => {
         const on = this.picked.includes(a);
         return html`<button class="pill ${on ? 'on' : 'gl'}" aria-pressed=${on} @click=${() => this.toggleArea(a)}>${on ? html`<ha-icon icon="mdi:check"></ha-icon>` : nothing}${areaName(this.hass!, a) ?? a}</button>`;
@@ -178,6 +208,27 @@ export class HomeViewVacuumPopup extends PopupContent {
     </div>`;
   }
 
+  /** Each of the device's selects (mode first), as a row of choices, or a menu when there are many. */
+  private settings() {
+    return this.selects.map((id) => {
+      const st = this.st(id);
+      if (!st || isUnavailable(st)) return nothing;
+      const options = (st.attributes.options as string[] | undefined) ?? [];
+      const name = String(st.attributes.friendly_name ?? id).replace(new RegExp(`^${this.popupTitle()}\\s*`, 'i'), '') || 'Mode';
+      const pick = (o: string) => () => {
+        if (o === st.state) return;
+        haptic('selection');
+        void this.hass!.callService(id.split('.')[0], 'select_option', { entity_id: id, option: o });
+      };
+      return html`<div class="block">
+        <h3 class="sec">${name}</h3>
+        <div class="speeds" role="radiogroup" aria-label=${name}>${options.map(
+          (o) => html`<button role="radio" aria-checked=${o === st.state} @click=${pick(o)}>${this.hass!.formatEntityState(st, o)}</button>`,
+        )}</div>
+      </div>`;
+    });
+  }
+
   private map() {
     const id = this.mapEntity;
     const st = this.st(id);
@@ -187,10 +238,15 @@ export class HomeViewVacuumPopup extends PopupContent {
     return html`<div class="panel mappanel"><img class="map" src=${url} alt="Map from ${st.attributes.friendly_name ?? id}" /></div>`;
   }
 
+  /** Remaining time is shown with the state, not repeated in the last clean. */
+  private isRemaining(id: string): boolean {
+    return id === this.remaining?.entity_id;
+  }
+
   /** The device's sensors, as the last run and the parts that wear out. */
   private details() {
     const rows = this.siblings
-      .filter((id) => id.startsWith('sensor.') && this.st(id)?.attributes.device_class !== 'battery' && !isUnavailable(this.st(id)))
+      .filter((id) => id.startsWith('sensor.') && this.st(id)?.attributes.device_class !== 'battery' && !isUnavailable(this.st(id)) && !this.isRemaining(id))
       .map((id) => {
         const st = this.st(id)!;
         const name = String(st.attributes.friendly_name ?? id).replace(new RegExp(`^${this.popupTitle()}\\s*`, 'i'), '');
@@ -235,6 +291,7 @@ export class HomeViewVacuumPopup extends PopupContent {
           <div class="panel">
             ${this.controls(st)}
             ${this.areas(st)}
+            ${this.settings()}
             ${this.suction(st)}
           </div>
         </div>
@@ -373,6 +430,7 @@ export class HomeViewVacuumPopup extends PopupContent {
         align-items: baseline;
       }
       .link {
+        min-height: 36px;
         border: 0;
         background: none;
         color: var(--_ink2);
@@ -433,18 +491,19 @@ export class HomeViewVacuumPopup extends PopupContent {
         background: var(--_ink);
         color: var(--_inv);
       }
+      /* The map fills its panel (as tall as the controls beside it), scaled to fit without cropping. */
       .mappanel {
-        display: grid;
-        place-items: center;
-        padding: 14px;
-        min-height: 260px;
+        position: relative;
+        padding: 0;
+        min-height: 360px;
+        overflow: hidden;
       }
       .map {
-        width: 100%;
-        height: 100%;
-        max-height: 520px;
+        position: absolute;
+        inset: 12px;
+        width: calc(100% - 24px);
+        height: calc(100% - 24px);
         object-fit: contain;
-        border-radius: 18px;
       }
       .details {
         display: grid;

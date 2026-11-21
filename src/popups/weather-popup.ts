@@ -135,6 +135,8 @@ export class HomeViewWeatherPopup extends PopupContent {
     }
     slots.sort((a, b) => a.t - b.t);
     let day = new Date(from).getDate();
+    // The rain line only when some hour has a real chance of it, so dry days don't leave a gap.
+    const wet = slots.some((s) => !s.sun && (s.rain ?? 0) >= 10);
     return html`<div class="strip" role="list">${slots.map((s) => {
       const d = new Date(s.t);
       const newDay = d.getDate() !== day && !s.sun;
@@ -143,7 +145,7 @@ export class HomeViewWeatherPopup extends PopupContent {
         <div class="st">${newDay ? weekday(this.hass, d) : s.top}</div>
         <ha-icon .icon=${s.icon} class=${s.sun ? 'sunicon' : ''}></ha-icon>
         <div class="sv">${s.value}</div>
-        <div class="sr">${!s.sun && s.rain != null && s.rain >= 10 ? `${Math.round(s.rain)}%` : ''}</div>
+        ${wet ? html`<div class="sr">${!s.sun && s.rain != null && s.rain >= 10 ? `${Math.round(s.rain)}%` : ''}</div>` : nothing}
       </div>`;
     })}</div>`;
   }
@@ -285,38 +287,39 @@ export class HomeViewWeatherPopup extends PopupContent {
         font-weight: 600;
         color: var(--_ink2);
       }
-      /* Swipe sideways through the next 48 hours; each slot is a comfortable target. */
+      /*
+       * Swipe sideways through the next 48 hours. Slots share the width evenly
+       * (twelve across a full sheet, fewer on narrower ones), so the first
+       * screenful always fills the panel.
+       */
       .strip {
-        display: flex;
-        gap: 4px;
+        --_n: 12;
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: calc((100% - (var(--_n) - 1) * 6px) / var(--_n));
+        align-items: start;
+        gap: 6px;
         overflow-x: auto;
         overscroll-behavior-x: contain;
-        scroll-snap-type: x proximity;
+        scroll-snap-type: x mandatory;
         -webkit-overflow-scrolling: touch;
-        margin: 0 -24px;
-        padding: 0 24px 4px;
         scrollbar-width: none;
       }
       .strip::-webkit-scrollbar {
         display: none;
       }
       .slot {
-        flex: none;
-        width: 68px;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 10px;
-        padding: 12px 0;
+        gap: 12px;
+        padding: 14px 0;
         border-radius: 20px;
         scroll-snap-align: start;
         --mdc-icon-size: 30px;
       }
       .slot:first-child {
         background: var(--_glass-hi);
-      }
-      .sunslot {
-        width: 84px;
       }
       .sunicon {
         color: #ffc861;
@@ -337,6 +340,7 @@ export class HomeViewWeatherPopup extends PopupContent {
       }
       .sunslot .sv {
         font-size: 15px;
+        line-height: 26px;
         color: var(--_ink2);
       }
       .sr {
@@ -416,14 +420,16 @@ export class HomeViewWeatherPopup extends PopupContent {
         .temp {
           font-size: 72px;
         }
+        .strip {
+          --_n: 8;
+        }
       }
       @container (max-width: 520px) {
         .panel {
           padding: 18px;
         }
         .strip {
-          margin: 0 -18px;
-          padding: 0 18px 4px;
+          --_n: 5;
         }
         .tiles {
           grid-template-columns: repeat(2, minmax(0, 1fr));

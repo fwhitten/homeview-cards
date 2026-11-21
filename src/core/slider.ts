@@ -10,8 +10,12 @@ import { defineElement } from './register';
  * end. Drag anywhere along it to change the value (relative to where you
  * started, so a tap never jumps it); vertical swipes still scroll the page.
  *
- * Events: `slide` while dragging (detail: value), `value-change` when let go,
- * and `power` when the power button is tapped.
+ * While dragging it skips Lit entirely: the fill (a GPU transform) and the
+ * value text are written straight to the DOM once per frame, so it keeps up
+ * with the finger however busy the page is.
+ *
+ * Events: `slide` while dragging (once per frame, detail: value),
+ * `value-change` when let go, and `power` when the power button is tapped.
  */
 export class HomeViewSlider extends LitElement {
   @property({ type: Number }) value = 0;
@@ -19,7 +23,7 @@ export class HomeViewSlider extends LitElement {
   @property({ type: Number }) max = 100;
   @property({ type: Number }) step = 1;
   @property() label = '';
-  /** Text for the value; defaults to the number with `unit`. */
+  /** Text for the value when not dragging; defaults to the number with `unit`. */
   @property() display?: string;
   @property() unit = '%';
   @property() color = 'var(--_ink)';
@@ -30,15 +34,27 @@ export class HomeViewSlider extends LitElement {
   @property() icon?: string;
   /** The theme mode of the pop-up it sits in, for the glass and ink colours. */
   @property({ reflect: true }) mode = 'dark';
-  @state() private dragging?: number;
+  /** The value just set here, held until the entity reports it so the fill doesn't snap back. */
+  @state() private held?: number;
+  private heldTimer?: number;
   private startX = 0;
   private startY = 0;
   private base = 0;
   private pointer = -1;
   private engaged = false;
+  private live = 0;
+  private width = 1;
+  private frame = 0;
+  /** The fill's fraction at the last render: applied in updated(), as the drag writes it directly. */
+  private frac = 0;
+  private valText = '';
 
   private get shown(): number {
-    return this.dragging ?? this.value;
+    return this.engaged ? this.live : this.held ?? this.value;
+  }
+
+  private text(v: number): string {
+    return `${Math.round(v)}${this.unit}`;
   }
 
   private down = (ev: PointerEvent): void => {
@@ -46,15 +62,15 @@ export class HomeViewSlider extends LitElement {
     this.pointer = ev.pointerId;
     this.startX = ev.clientX;
     this.startY = ev.clientY;
-    this.base = this.value;
+    this.base = this.shown;
     this.engaged = false;
   };
 
   private move = (ev: PointerEvent): void => {
     if (ev.pointerId !== this.pointer) return;
     const dx = ev.clientX - this.startX;
-    const dy = ev.clientY - this.startY;
     if (!this.engaged) {
+      const dy = ev.clientY - this.startY;
       // A vertical swipe is the page scrolling: let it go.
       if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) {
         this.pointer = -1;
@@ -62,40 +78,72 @@ export class HomeViewSlider extends LitElement {
       }
       if (Math.abs(dx) < 6) return;
       this.engaged = true;
+      this.live = this.base;
+      const track = this.renderRoot.querySelector('.track') as HTMLElement;
+      this.width = Math.max(1, track.clientWidth);
+      track.classList.add('live');
       try {
-        (ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId);
+        track.setPointerCapture(ev.pointerId);
       } catch {
         /* capture can fail if the pointer already left */
       }
       haptic('selection');
     }
-    const track = this.renderRoot.querySelector('.track') as HTMLElement;
     const span = this.max - this.min;
-    const raw = this.base + (dx / Math.max(1, track.clientWidth)) * span;
+    const raw = this.base + (dx / this.width) * span;
     const v = Math.min(this.max, Math.max(this.min, Math.round(raw / this.step) * this.step));
-    if (v !== this.dragging) {
-      this.dragging = v;
-      fireEvent(this, 'slide', v);
-    }
+    if (v === this.live) return;
+    this.live = v;
+    if (!this.frame) this.frame = requestAnimationFrame(this.paint);
+  };
+
+  /** One frame of a drag: the fill and the number, straight to the DOM, then tell the parent. */
+  private paint = (): void => {
+    this.frame = 0;
+    const v = this.live;
+    const fill = this.renderRoot.querySelector('.fill') as HTMLElement | null;
+    const val = this.renderRoot.querySelector('.val');
+    if (fill) fill.style.transform = `scaleX(${(v - this.min) / (this.max - this.min || 1)})`;
+    if (val) val.textContent = this.text(v);
+    fireEvent(this, 'slide', v);
   };
 
   private up = (ev: PointerEvent): void => {
     if (ev.pointerId !== this.pointer) return;
     this.pointer = -1;
-    if (this.engaged && this.dragging !== undefined) {
-      const v = this.dragging;
-      fireEvent(this, 'value-change', v);
-      // Hold the new value until the entity reports it, so the fill doesn't snap back.
-      window.setTimeout(() => (this.dragging = undefined), 1500);
-    }
+    if (!this.engaged) return;
     this.engaged = false;
+    cancelAnimationFrame(this.frame);
+    this.frame = 0;
+    this.renderRoot.querySelector('.track')?.classList.remove('live');
+    this.hold(this.live);
+    fireEvent(this, 'value-change', this.live);
   };
 
+  private hold(v: number): void {
+    this.held = v;
+    window.clearTimeout(this.heldTimer);
+    this.heldTimer = window.setTimeout(() => (this.held = undefined), 2500);
+  }
+
+  protected willUpdate(changed: Map<string, unknown>): void {
+    // The entity caught up: show its value again.
+    if (changed.has('value') && this.held !== undefined && Math.abs(this.value - this.held) <= this.step) this.held = undefined;
+  }
+
+  /** The fill and the number are written here rather than in the template, as a drag writes them directly too. */
+  protected updated(): void {
+    (this.renderRoot.querySelector('.fill') as HTMLElement | null)?.style.setProperty('transform', `scaleX(${this.frac})`);
+    const val = this.renderRoot.querySelector('.val');
+    if (val) val.textContent = this.valText;
+  }
+
   private key = (ev: KeyboardEvent): void => {
-    const d = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[ev.key];
+    const d = ({ ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 } as Record<string, number>)[ev.key];
     if (!d || this.disabled) return;
     ev.preventDefault();
-    const v = Math.min(this.max, Math.max(this.min, this.value + d * this.step * (ev.shiftKey ? 10 : 1)));
+    const v = Math.min(this.max, Math.max(this.min, this.shown + d * this.step * (ev.shiftKey ? 10 : 1)));
+    this.hold(v);
     fireEvent(this, 'value-change', v);
   };
 
@@ -107,25 +155,26 @@ export class HomeViewSlider extends LitElement {
 
   render() {
     const v = this.shown;
-    const frac = (v - this.min) / (this.max - this.min || 1);
-    const fill = this.power && !this.on && this.dragging === undefined ? 0 : frac;
-    const text = this.display ?? `${Math.round(v)}${this.unit}`;
+    const off = this.power && !this.on && this.held === undefined && !this.engaged;
+    this.frac = off ? 0 : (v - this.min) / (this.max - this.min || 1);
+    const text = this.engaged || this.held !== undefined ? this.text(v) : this.display ?? this.text(v);
+    this.valText = off ? (this.display === 'Unavailable' ? this.display : 'Off') : text;
     return html`<div
-      class="track"
+      class="track ${this.engaged ? 'live' : ''}"
       role="slider"
       tabindex=${this.disabled ? -1 : 0}
       aria-label=${this.label}
       aria-valuemin=${this.min}
       aria-valuemax=${this.max}
       aria-valuenow=${v}
-      aria-valuetext=${text}
+      aria-valuetext=${off ? 'Off' : text}
       @pointerdown=${this.down}
       @pointermove=${this.move}
       @pointerup=${this.up}
       @pointercancel=${this.up}
       @keydown=${this.key}
     >
-      <div class="fill" style="width:${fill * 100}%;background:${this.color}"></div>
+      <div class="fill" style="background:${this.color}"></div>
       ${this.power
         ? html`<button class="pwr ${this.on ? 'on' : ''}" aria-label=${this.on ? `Turn ${this.label} off` : `Turn ${this.label} on`} aria-pressed=${this.on} @click=${this.togglePower}>
             <ha-icon icon="mdi:power"></ha-icon>
@@ -134,7 +183,7 @@ export class HomeViewSlider extends LitElement {
           ? html`<ha-icon class="lead" .icon=${this.icon}></ha-icon>`
           : nothing}
       <span class="label">${this.label}</span>
-      <span class="val">${this.power && !this.on && this.dragging === undefined ? 'Off' : text}</span>
+      <span class="val"></span>
     </div>`;
   }
 
@@ -164,17 +213,23 @@ export class HomeViewSlider extends LitElement {
         -webkit-user-select: none;
         -webkit-tap-highlight-color: transparent;
         outline: none;
+        /* Its own layer, so the fill moving never repaints the page around it. */
+        contain: layout paint;
       }
       .track:focus-visible {
-        box-shadow: 0 0 0 3px var(--_ink);
+        box-shadow: inset 0 0 0 3px var(--_ink);
       }
       .fill {
         position: absolute;
-        left: 0;
-        top: 0;
-        bottom: 0;
+        inset: 0;
+        transform-origin: left center;
         opacity: 0.62;
-        transition: width 0.18s ease;
+        transition: transform 0.18s ease;
+        will-change: transform;
+      }
+      /* Under the finger: no easing, so it never lags behind. */
+      .track.live .fill {
+        transition: none;
       }
       .pwr {
         position: relative;
