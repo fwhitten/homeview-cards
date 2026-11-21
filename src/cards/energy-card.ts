@@ -11,7 +11,9 @@ import {
   energyBetween,
   energyDevices,
   fetchEnergyStats,
-  fetchPowerSeries,
+  fetchPowerSamples,
+  powerPeak,
+  powerSeries,
   fetchPrefs,
   formatEnergy,
   formatPower,
@@ -150,6 +152,9 @@ const EDITOR: EditorSpec = {
 export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
   @state() private prefs?: EnergyPrefs;
   @state() private spark: Array<number | null> = [];
+  /** The highest reading in the recorded window, and the highest live one seen since it was fetched. */
+  @state() private recordedPeak?: { watts: number; at: number };
+  @state() private livePeak?: { watts: number; at: number };
   /** Style C: the period so far, the last period up to the same point (for the comparison) and in full. */
   @state() private sofar?: number;
   @state() private sameLast?: number;
@@ -224,10 +229,14 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
     if (sigs.length && style === 'threshold') {
       try {
         const width = this.getBoundingClientRect().width || 420;
-        this.sparkEnd = Date.now();
-        this.spark = await fetchPowerSeries(hass, sigs, hours, bucketCount(hours, this.config.points_per_hour, width));
+        const samples = await fetchPowerSamples(hass, sigs, hours);
+        this.sparkEnd = samples.end;
+        this.spark = powerSeries(samples, sigs, hours, bucketCount(hours, this.config.points_per_hour, width));
+        this.recordedPeak = powerPeak(samples, sigs, hours);
+        this.livePeak = undefined;
       } catch {
         this.spark = [];
+        this.recordedPeak = undefined;
       }
     }
     if (this.prefs && style === 'total') {
@@ -283,9 +292,24 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
     return this.spark.filter((v): v is number => v !== null);
   }
 
+  protected willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
+    // Live readings between refreshes count towards the peak too.
+    if (changed.has('hass') && (this.config.style ?? 'threshold') === 'threshold') {
+      const w = this.watts;
+      if (w != null && (!this.livePeak || w > this.livePeak.watts)) this.livePeak = { watts: w, at: Date.now() };
+    }
+  }
+
+  /** The highest of the recorded readings, any live reading since, and the reading right now. */
+  private get peakReading(): { watts: number; at: number } | undefined {
+    const now = this.watts;
+    const all = [this.recordedPeak, this.livePeak, now != null ? { watts: now, at: Date.now() } : undefined].filter((p): p is { watts: number; at: number } => !!p);
+    return all.reduce<{ watts: number; at: number } | undefined>((best, p) => (!best || p.watts > best.watts ? p : best), undefined);
+  }
+
   private get peak(): number | undefined {
-    const vals = this.readings;
-    return vals.length ? Math.max(...vals) : undefined;
+    return this.peakReading?.watts;
   }
 
   private get wide(): boolean {
@@ -377,11 +401,8 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
         [this.power(avg), 'Average'],
         [this.power(Math.min(...vals)), 'Lowest'],
       ];
-      if (this.size === 'l' && peak != null) {
-        const i = this.spark.indexOf(peak);
-        const hours = this.config.hours ?? 3;
-        items.push([time(this.hass, new Date(this.sparkEnd - (1 - i / Math.max(1, this.spark.length - 1)) * hours * 3_600_000)), 'Peak at']);
-      }
+      const at = this.peakReading?.at;
+      if (this.size === 'l' && at != null) items.push([time(this.hass, new Date(at)), 'Peak at']);
       extra = this.stats(items);
     }
     return html`

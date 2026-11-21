@@ -31,8 +31,10 @@ export abstract class PopupContent extends LitElement {
     tokens,
     base,
     css`
+      /* Pop-ups lay out by their own width (a container), not the screen's: the sheet can be narrower than the viewport. */
       :host {
         height: auto;
+        container-type: inline-size;
       }
       .panel {
         position: relative;

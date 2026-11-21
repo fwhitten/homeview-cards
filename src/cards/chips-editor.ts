@@ -79,6 +79,27 @@ const chipSchema = (c: Chip): Field[] => [
     title: 'Interactions',
     icon: 'mdi:gesture-tap',
     schema: [
+      {
+        name: 'popup',
+        selector: {
+          select: {
+            mode: 'dropdown',
+            options: [
+              { value: 'ev', label: 'EV charger controls' },
+              { value: 'all-lights', label: 'All lights, by area' },
+            ],
+          },
+        },
+      },
+      ...(c.popup === 'ev'
+        ? [
+            { name: 'vehicle_entity', selector: { entity: { domain: ['select', 'input_select'] } } },
+            { name: 'soc_entity', selector: { entity: { domain: ['number', 'input_number'] } } },
+            { name: 'target_soc_entity', selector: { entity: { domain: ['number', 'input_number'] } } },
+            { name: 'target_time_entity', selector: { entity: { domain: ['time', 'input_datetime'] } } },
+          ]
+        : []),
+      ...(c.popup === 'all-lights' ? [{ name: 'areas', selector: { area: { multiple: true } } }] : []),
       { name: 'tap_action', selector: { ui_action: {} } },
       { name: 'hold_action', selector: { ui_action: {} } },
       { name: 'double_tap_action', selector: { ui_action: {} } },
@@ -194,7 +215,13 @@ const LABELS: Record<string, string> = {
   state_content: 'State shows (pick, or type an attribute)',
   color: 'Icon colour',
   badge: 'Count badge (style B)',
-  tap_action: 'Tap',
+  popup: 'Tap opens a pop-up (a select chip opens its options by itself)',
+  vehicle_entity: 'Vehicle (empty: found on the charger)',
+  soc_entity: 'Battery charge now (empty: found on the charger)',
+  target_soc_entity: 'Charge target (empty: found on the charger)',
+  target_time_entity: 'Ready-by time (empty: found on the charger)',
+  areas: 'Only these areas (empty: every area with lights)',
+  tap_action: 'Tap (overrides the pop-up)',
   hold_action: 'Hold',
   double_tap_action: 'Double tap',
 };

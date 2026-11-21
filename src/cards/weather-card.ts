@@ -25,7 +25,7 @@ export interface WeatherCardConfig extends BaseCardConfig {
   show_sun?: boolean;
 }
 
-interface Forecast {
+export interface Forecast {
   datetime: string;
   condition?: string;
   temperature?: number;
@@ -35,12 +35,12 @@ interface Forecast {
   is_daytime?: boolean;
 }
 
-interface ForecastEvent {
+export interface ForecastEvent {
   type: 'hourly' | 'daily' | 'twice_daily';
   forecast: Forecast[] | null;
 }
 
-const ICON: Record<string, string> = {
+export const ICON: Record<string, string> = {
   'clear-night': 'mdi:weather-night',
   cloudy: 'mdi:weather-cloudy',
   exceptional: 'mdi:alert-circle-outline',
@@ -58,9 +58,9 @@ const ICON: Record<string, string> = {
   'windy-variant': 'mdi:weather-windy-variant',
 };
 
-const WET = new Set(['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']);
+export const WET = new Set(['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']);
 
-const sky = (condition: string, night: boolean): string => {
+export const sky = (condition: string, night: boolean): string => {
   if (WET.has(condition) || condition === 'lightning') return 'linear-gradient(180deg,#4b5b77 0%,#303b50 58%,#232c3b 100%)';
   if (condition === 'snowy') return 'linear-gradient(180deg,#6d7d96 0%,#4d5a70 60%,#3a4558 100%)';
   if (condition === 'fog') return 'linear-gradient(180deg,#7d8794 0%,#5c6672 100%)';
@@ -96,7 +96,10 @@ const EDITOR: EditorSpec = {
     layoutSection,
   ],
   labels: { entity: 'Weather', forecast: 'Forecast panel', rain_entity: 'Rain source', rain_attribute: 'Attribute with the minute list', rain_threshold: 'Rain chance that counts as rain due', show_animation: 'Animated sky', show_sun: 'Sunrise and sunset in the hourly forecast' },
-  helpers: { rain_entity: 'An entity with minute-by-minute precipitation, such as from Pirate Weather. Without it the next-hour view uses the hourly forecast.' },
+  helpers: {
+    rain_entity: 'An entity with minute-by-minute precipitation, such as from Pirate Weather. Without it the next-hour view uses the hourly forecast.',
+    tap_action: 'Default: opens the weather pop-up',
+  },
 };
 
 /**
@@ -127,6 +130,10 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
 
   protected watched() {
     return [this.config.entity, this.config.rain_entity, 'sun.sun'];
+  }
+
+  protected popupName(): string {
+    return 'weather';
   }
 
   connectedCallback(): void {

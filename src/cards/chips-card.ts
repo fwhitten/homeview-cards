@@ -11,6 +11,8 @@ import { greeting, longDate } from '../core/format';
 import { eventFromAttributes, fetchCalendarEvents, parseEvents, type CalendarEvent } from '../core/calendar';
 import { calendarDays, isCalendar, isTimer, progressColor, progressReading, type ProgressReading, type ProgressSource } from '../core/progress';
 import { runAction } from '../core/actions';
+import { openPopup } from '../core/popup-bus';
+import { openMenu } from '../core/menu';
 import { defineElement, registerCard } from '../core/register';
 import { appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 import './chips-editor';
@@ -49,6 +51,19 @@ export interface Chip extends Omit<ProgressSource, 'entity' | 'name' | 'icon' | 
   double_tap_action?: ActionConfig;
   /** Progress chips on a calendar: count all-day events. */
   include_all_day?: boolean;
+  /**
+   * A HomeView pop-up for the tap: `ev` (EV charger controls) or `all-lights`
+   * (every light by area). A select or input_select chip opens a menu of its
+   * options instead, unless it has a tap_action.
+   */
+  popup?: 'ev' | 'all-lights';
+  /** EV pop-up: entities to use instead of the ones found on the charger's device. */
+  vehicle_entity?: string;
+  soc_entity?: string;
+  target_soc_entity?: string;
+  target_time_entity?: string;
+  /** All-lights pop-up: only these areas (default: every area with a light). */
+  areas?: string[];
 }
 
 const isProgress = (c: Chip): boolean => c.type === 'progress';
@@ -255,8 +270,18 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
     return [showName ? name : '', showState ? this.stateText(c, st, name) : ''];
   }
 
-  private act(c: Chip, kind: 'tap' | 'hold' | 'double_tap') {
+  private act(c: Chip, kind: 'tap' | 'hold' | 'double_tap', anchor?: HTMLElement) {
     if (!this.hass || this.preview) return;
+    if (kind === 'tap' && !c.tap_action) {
+      if (c.popup) {
+        openPopup(c.popup, { entity: c.entity, config: { ...c, appearance: this.config.appearance, night_entity: this.config.night_entity } as Record<string, unknown> });
+        return;
+      }
+      if (anchor && c.entity && /^(input_)?select\./.test(c.entity)) {
+        this.optionsMenu(c, anchor);
+        return;
+      }
+    }
     const fallback = c.entity && kind !== 'double_tap' ? { action: 'more-info' as const } : undefined;
     const action = (kind === 'tap' ? c.tap_action : kind === 'hold' ? c.hold_action : c.double_tap_action) ?? fallback;
     void runAction({ node: this, hass: this.hass, entity: c.entity }, action);
@@ -273,9 +298,25 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
     };
   }
 
+  /** A select's options in a small menu under the chip; picking one sets it. */
+  private optionsMenu(c: Chip, anchor: HTMLElement): void {
+    const st = this.hass!.states[c.entity!];
+    if (!st) return;
+    const domain = c.entity!.split('.')[0];
+    const options = (st.attributes.options as string[] | undefined) ?? [];
+    openMenu(anchor, {
+      heading: c.name && !c.name.includes('{state}') ? c.name : (st.attributes.friendly_name as string | undefined),
+      items: options.map((o) => ({ value: o, label: this.hass!.formatEntityState(st, o) })),
+      current: st.state,
+      mode: this.mode,
+      onPick: (option) => void this.hass!.callService(domain, 'select_option', { entity_id: c.entity, option }),
+    });
+  }
+
   private onClick(c: Chip, i: number) {
     return (ev: Event) => {
       ev.stopPropagation();
+      const anchor = ev.currentTarget as HTMLElement;
       window.clearTimeout(this.holdTimer);
       if (this.held) return;
       if (this.config.style === 'compact' && this.expanded !== i) {
@@ -293,11 +334,11 @@ export class HomeViewChipsCard extends HomeViewCard<ChipsCardConfig> {
         }
         this.tapTimer = window.setTimeout(() => {
           this.tapTimer = undefined;
-          this.act(c, 'tap');
+          this.act(c, 'tap', anchor);
         }, 250);
         return;
       }
-      this.act(c, 'tap');
+      this.act(c, 'tap', anchor);
     };
   }
 

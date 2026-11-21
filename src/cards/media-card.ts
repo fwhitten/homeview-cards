@@ -50,7 +50,18 @@ interface CachedNowPlaying {
   title?: string;
   artist?: string;
   colors?: [string, string];
+  /** What was playing, so Resume can ask for exactly that track where the player allows it. */
+  content_id?: string;
+  content_type?: string;
 }
+
+/**
+ * Idle: nothing loaded to play or pause. A HomePod (Apple TV integration)
+ * that's gone idle can still report artwork for whatever it would play
+ * next, which isn't what this card last showed, so idle ignores the
+ * player's own media.
+ */
+const isIdle = (st: HassEntity): boolean => ['off', 'idle', 'standby', 'on'].includes(st.state) && !st.attributes.media_title;
 
 const CACHE_PREFIX = 'homeview-media:';
 
@@ -160,17 +171,20 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
   protected updated(changed: PropertyValues): void {
     super.updated(changed);
     const art = this.artwork;
-    if (art && art !== this.washFor) {
+    const st = this.stateObj();
+    // Only a real track (playing or paused, with a title) is remembered as "last played".
+    if (art && art !== this.washFor && st && !isIdle(st) && st.attributes.media_title) {
       this.washFor = art;
-      const st = this.stateObj();
       void sampleArtwork(art).then((info) => {
         if (!info) return;
         this.wash = info.colors;
         writeCache(this.config.entity, {
           art: info.dataUrl,
-          title: st?.attributes.media_title,
-          artist: st?.attributes.media_artist ?? st?.attributes.app_name,
+          title: st.attributes.media_title,
+          artist: st.attributes.media_artist ?? st.attributes.app_name,
           colors: info.colors,
+          content_id: st.attributes.media_content_id,
+          content_type: st.attributes.media_content_type,
         });
       });
     }
@@ -224,6 +238,29 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
     return { pos: Math.min(dur, pos), dur };
   }
 
+  /**
+   * Resume. Music Assistant can be asked for the exact track the card shows;
+   * other players (a HomePod through the Apple TV integration) only take a
+   * plain play, which continues whatever they have queued.
+   */
+  private resume = (ev: Event): void => {
+    ev.stopPropagation();
+    if (this.preview) return;
+    haptic('light');
+    const st = this.stateObj();
+    const cached = readCache(this.config.entity);
+    const ma = this.hass?.entities?.[this.config.entity]?.platform === 'music_assistant' || st?.attributes.mass_player_type != null;
+    if (ma && cached?.content_id) {
+      void this.call('media_player', 'play_media', {
+        entity_id: this.config.entity,
+        media_content_id: cached.content_id,
+        media_content_type: cached.content_type ?? 'music',
+      });
+      return;
+    }
+    void this.call('media_player', 'media_play', { entity_id: this.config.entity });
+  };
+
   private moreInfo = (ev: Event): void => {
     ev.stopPropagation();
     fireEvent(this, 'hass-more-info', { entityId: this.config.entity });
@@ -273,13 +310,20 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
     }
     const layout = this.config.layout === 'auto' || !this.config.layout ? (this.size === 'l' || this.size === 't' ? 'artwork' : 'compact') : this.config.layout;
     const big = layout === 'artwork';
-    const idle = ['off', 'idle', 'standby', 'on'].includes(st.state) && !st.attributes.media_title;
-    // When the player drops its artwork (paused a while, or idle), keep showing the last track.
+    const idle = isIdle(st);
+    // Idle shows only the last track this card saw playing. Paused without artwork keeps it too.
     const cached = !this.artwork || idle ? readCache(this.config.entity) : undefined;
-    const [c1, c2] = this.wash ?? cached?.colors ?? ['#d0466f', '#f0a35a'];
-    const art = this.artwork ?? cached?.art;
-    const title = (st.attributes.media_title as string) ?? cached?.title ?? (idle ? 'Nothing playing' : name);
-    const artist = (st.attributes.media_artist as string) ?? (st.attributes.app_name as string) ?? cached?.artist ?? (idle ? name : '');
+    let colors = this.wash ?? cached?.colors;
+    let art = this.artwork ?? cached?.art;
+    let title = (st.attributes.media_title as string) ?? cached?.title ?? name;
+    let artist = (st.attributes.media_artist as string) ?? (st.attributes.app_name as string) ?? cached?.artist ?? '';
+    if (idle) {
+      colors = cached?.colors;
+      art = cached?.art;
+      title = cached?.title ?? 'Nothing playing';
+      artist = cached?.title ? ['Last played', cached.artist].filter(Boolean).join(' · ') : name;
+    }
+    const [c1, c2] = colors ?? ['#d0466f', '#f0a35a'];
     const pos = this.position(st);
     const vol = this.dragVolume;
 
@@ -306,7 +350,7 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
               ${pos
                 ? html`<div class="progress"><div class="bar"><i style="width:${(pos.pos / pos.dur) * 100}%"></i></div><div class="times"><span>${mmss(pos.pos)}</span><span>−${mmss(pos.dur - pos.pos)}</span></div></div>`
                 : nothing}
-              <div class="ctls">${idle ? html`<button class="btn gl resume" @click=${this.svc('media_play')}><ha-icon icon="mdi:play"></ha-icon>Resume</button>` : this.controls(st, true)}</div>
+              <div class="ctls">${idle ? html`<button class="btn gl resume" @click=${this.resume}><ha-icon icon="mdi:play"></ha-icon>Resume</button>` : this.controls(st, true)}</div>
             `
           : html`
               <div class="row">
@@ -322,7 +366,7 @@ export class HomeViewMediaCard extends HomeViewCard<MediaCardConfig> {
                   ${pos
                     ? html`<div class="progress"><div class="bar"><i style="width:${(pos.pos / pos.dur) * 100}%"></i></div><div class="times"><span>${mmss(pos.pos)}</span><span>−${mmss(pos.dur - pos.pos)}</span></div></div>`
                     : nothing}
-                  <div class="ctls">${idle ? html`<button class="btn gl resume" @click=${this.svc('media_play')}><ha-icon icon="mdi:play"></ha-icon>Resume</button>` : this.controls(st, false)}</div>
+                  <div class="ctls">${idle ? html`<button class="btn gl resume" @click=${this.resume}><ha-icon icon="mdi:play"></ha-icon>Resume</button>` : this.controls(st, false)}</div>
                 </div>
               </div>
             `}

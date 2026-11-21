@@ -34,6 +34,8 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
   @state() private hass?: HomeAssistant;
   @property({ reflect: true }) mode: Mode = 'dark';
   @property({ type: Boolean, reflect: true }) open = false;
+  /** Still catching taps for a moment after closing, so the tap that closed it can't land on a card beneath. */
+  @property({ type: Boolean, reflect: true }) closing = false;
   private content?: PopupContentElement;
   private unsub?: () => void;
   private pushed = false;
@@ -97,7 +99,9 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
   private dismiss(): void {
     window.clearTimeout(this.autoTimer);
     this.open = false;
+    this.closing = true;
     this.pushed = false;
+    window.setTimeout(() => (this.closing = false), 400);
     window.setTimeout(() => {
       if (this.open) return;
       this.content?.remove();
@@ -186,7 +190,10 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
         position: fixed;
         inset: 0;
         z-index: 1000;
+        box-sizing: border-box;
+        padding: 24px;
         display: grid;
+        grid-template: minmax(0, 1fr) / minmax(0, 1fr);
         place-items: center;
         pointer-events: none;
         font-family: var(--_font);
@@ -194,7 +201,8 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
         font-variant-numeric: tabular-nums;
         color: var(--_ink);
       }
-      :host([open]) {
+      :host([open]),
+      :host([closing]) {
         pointer-events: auto;
       }
       .scrim {
@@ -215,9 +223,10 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
       .sheet {
         position: relative;
         box-sizing: border-box;
-        width: min(1180px, calc(100vw - 48px));
-        max-height: calc(100vh - 48px);
-        max-height: calc(100dvh - 48px);
+        /* Sized from the host's box, not viewport units, which some app web views misreport. */
+        width: 100%;
+        max-width: 1180px;
+        max-height: 100%;
         display: flex;
         flex-direction: column;
         gap: 22px;
@@ -286,8 +295,9 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
       }
       /* Media: the picture fills the sheet edge to edge, at its own aspect ratio, as large as the screen allows. */
       .sheet.media {
-        width: min(1600px, calc(100vw - 48px), calc((100vh - 48px) * var(--_aspect)));
-        width: min(1600px, calc(100vw - 48px), calc((100dvh - 48px) * var(--_aspect)));
+        width: 100%;
+        max-width: min(1600px, calc((100vh - 48px) * var(--_aspect)));
+        max-width: min(1600px, calc((100dvh - 48px) * var(--_aspect)));
         aspect-ratio: var(--_aspect);
         max-height: none;
         padding: 0;
@@ -333,16 +343,16 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
       }
       @media (max-width: 700px) {
         :host {
+          padding: 0;
           place-items: end center;
         }
         .sheet {
-          width: 100vw;
-          max-height: 92vh;
+          width: 100%;
+          max-height: 92%;
           border-radius: 32px 32px 0 0;
           padding: 22px 18px 28px;
         }
         .sheet.media {
-          width: 100vw;
           padding: 0;
         }
       }

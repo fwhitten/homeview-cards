@@ -14,8 +14,10 @@ export interface VacuumCardConfig extends BaseCardConfig {
   style?: 'status' | 'areas';
   /** The vacuum's battery sensor. The vacuum entity no longer carries battery itself. */
   battery_entity?: string;
-  /** Home Assistant areas mapped to the vacuum's segments, for vacuum.clean_area. */
+  /** Home Assistant areas mapped to the vacuum's segments, for vacuum.clean_area (style B and the pop-up). */
   areas?: string[];
+  /** The map for the pop-up: an image or camera entity. Empty: the one on the vacuum's device, if any. */
+  map_entity?: string;
 }
 
 /** VacuumEntityFeature bits from Home Assistant core. */
@@ -32,18 +34,23 @@ const LABEL: Record<string, string> = {
 };
 
 const EDITOR: EditorSpec = {
-  schema: (c) => [
+  schema: () => [
     { name: 'entity', required: true, selector: { entity: { domain: 'vacuum' } } },
     { name: 'name', selector: { text: {} } },
     { name: 'style', selector: choose([['status', 'A: state and quick actions'], ['areas', 'B: clean by area and set suction']], 'list') },
     { name: 'battery_entity', selector: { entity: { domain: 'sensor', device_class: 'battery' } } },
-    ...(c.style === 'areas' ? [{ name: 'areas', selector: { area: { multiple: true } } }] : []),
+    { name: 'areas', selector: { area: { multiple: true } } },
+    { name: 'map_entity', selector: { entity: { domain: ['image', 'camera'] } } },
     appearanceSection,
     actionsSection(),
     layoutSection,
   ],
-  labels: { entity: 'Vacuum', battery_entity: 'Battery sensor', areas: 'Areas to offer' },
-  helpers: { areas: 'Areas mapped to the vacuum in its entity settings (Map vacuum segments to areas)', tap_action: 'Default: more-info' },
+  labels: { entity: 'Vacuum', battery_entity: 'Battery sensor', areas: 'Areas to offer', map_entity: 'Map' },
+  helpers: {
+    areas: 'Areas mapped to the vacuum in its entity settings (Map vacuum segments to areas). Style B and the pop-up offer them',
+    map_entity: "Shown in the pop-up. Empty: the image or camera on the vacuum's device, if it has one",
+    tap_action: 'Default: opens the vacuum pop-up',
+  },
 };
 
 /**
@@ -71,6 +78,10 @@ export class HomeViewVacuumCard extends HomeViewCard<VacuumCardConfig> {
 
   protected watched() {
     return [this.config.entity, this.config.battery_entity];
+  }
+
+  protected popupName(): string {
+    return 'vacuum';
   }
 
   private svc(service: string, data: Record<string, unknown> = {}) {

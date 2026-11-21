@@ -1,4 +1,4 @@
-import { css, html, nothing, svg } from 'lit';
+import { css, html, nothing, svg, type PropertyValues } from 'lit';
 import { state } from 'lit/decorators.js';
 import { PopupContent } from './popup-base';
 import {
@@ -9,7 +9,9 @@ import {
   energyBetween,
   energyDevices,
   fetchEnergyStats,
-  fetchPowerSeries,
+  fetchPowerSamples,
+  powerPeak,
+  powerSeries,
   niceMax,
   totalSignals,
   totalStats,
@@ -24,6 +26,7 @@ import {
   startOfWeek,
   startOfYear,
   type EnergyPrefs,
+  type PowerSamples,
   type Threshold,
 } from '../core/energy';
 import { gappedPaths } from '../core/chart';
@@ -52,6 +55,11 @@ export class HomeViewEnergyPopup extends PopupContent {
   @state() private prefs?: EnergyPrefs;
   @state() private hours = 3;
   @state() private power: Array<number | null> = [];
+  /** The last six hours of readings: switching between 1, 3 and 6 h just re-buckets them. */
+  private samples?: PowerSamples;
+  @state() private recordedPeak?: { watts: number; at: number };
+  @state() private livePeak?: { watts: number; at: number };
+  private refresh?: number;
   private chartSize = new SizeController(this, '.chart svg');
   @state() private period: Period = 'day';
   @state() private offset = 0;
@@ -85,6 +93,24 @@ export class HomeViewEnergyPopup extends PopupContent {
     }
   }
 
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.refresh = window.setInterval(() => void this.loadPower(), 60_000);
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    window.clearInterval(this.refresh);
+  }
+
+  protected willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
+    if (changed.has('hass') && this.hass) {
+      const w = readTotal(this.hass, this.signals);
+      if (w != null && (!this.livePeak || w > this.livePeak.watts)) this.livePeak = { watts: w, at: Date.now() };
+    }
+  }
+
   private async loadAll(): Promise<void> {
     try {
       this.prefs = await fetchPrefs(this.hass!);
@@ -97,8 +123,26 @@ export class HomeViewEnergyPopup extends PopupContent {
   private async loadPower(): Promise<void> {
     const sigs = this.signals;
     if (!sigs.length || !this.hass) return;
+    try {
+      this.samples = await fetchPowerSamples(this.hass, sigs, 6);
+      this.livePeak = undefined;
+    } catch {
+      this.samples = undefined;
+    }
+    this.rebucket();
+  }
+
+  /** Draw the chosen span from the readings already fetched: no round trip, so the switch is instant. */
+  private rebucket(): void {
+    const sigs = this.signals;
+    if (!this.samples) {
+      this.power = [];
+      this.recordedPeak = undefined;
+      return;
+    }
     const width = (this.renderRoot.querySelector('.now') as HTMLElement | null)?.offsetWidth || 640;
-    this.power = await fetchPowerSeries(this.hass, sigs, this.hours, bucketCount(this.hours, this.cfg.points_per_hour, width)).catch(() => []);
+    this.power = powerSeries(this.samples, sigs, this.hours, bucketCount(this.hours, this.cfg.points_per_hour, width));
+    this.recordedPeak = powerPeak(this.samples, sigs, this.hours);
   }
 
   private async loadSoFar(): Promise<void> {
@@ -206,7 +250,7 @@ export class HomeViewEnergyPopup extends PopupContent {
 
   private setHours(h: number): void {
     this.hours = h;
-    void this.loadPower();
+    this.rebucket();
   }
 
   private rangeLabel(): string {
@@ -222,8 +266,10 @@ export class HomeViewEnergyPopup extends PopupContent {
     return String(start.getFullYear());
   }
 
+  /** The highest of the recorded readings, any live reading since, and the reading right now. */
   private get peak(): number | undefined {
-    const vals = this.power.filter((v): v is number => v !== null);
+    const now = this.hass ? readTotal(this.hass, this.signals) : null;
+    const vals = [this.recordedPeak?.watts, this.livePeak?.watts, now ?? undefined].filter((v): v is number => v != null);
     return vals.length ? Math.max(...vals) : undefined;
   }
 
@@ -289,16 +335,14 @@ export class HomeViewEnergyPopup extends PopupContent {
         </div>
         <div class="panel sofar">
           <h3 class="sec">So far</h3>
-          ${this.sofar.map((r) => {
+          <div class="sfs">${this.sofar.map((r) => {
             const d = r.value != null && r.previous ? ((r.value - r.previous) / r.previous) * 100 : undefined;
             return html`<div class="sf">
-              <div>
-                <div class="sfl">${r.label}</div>
-                ${d != null ? html`<div class="sfd" style="color:${d <= 0 ? 'var(--_energy-ink)' : 'var(--hv-c-notice)'}">${d <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(d))}% ${r.vs}</div>` : nothing}
-              </div>
-              <b>${r.value != null ? formatEnergy(r.value, lang) : '—'}</b><u>kWh</u>
+              <div class="sfl">${r.label}</div>
+              <div class="sfv"><b>${r.value != null ? formatEnergy(r.value, lang) : '—'}</b><u>kWh</u></div>
+              ${d != null ? html`<div class="sfd" style="color:${d <= 0 ? 'var(--_energy-ink)' : 'var(--hv-c-notice)'}">${d <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(d))}% ${r.vs}</div>` : nothing}
             </div>`;
-          })}
+          })}</div>
         </div>
       </div>
 
@@ -306,7 +350,7 @@ export class HomeViewEnergyPopup extends PopupContent {
         <div class="uhead">
           <div class="reading">
             <span class="mid">${b ? formatEnergy(b.total, lang) : '—'}</span><span class="unit">kWh</span>
-            ${cmp != null ? html`<span class="sub cmp">${cmp <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(cmp))}% vs the same point last ${this.period}</span>` : nothing}
+            ${cmp != null ? html`<span class="sub cmp">${cmp <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(cmp))}% vs ${{ day: 'yesterday', week: 'last week', month: 'last month', year: 'last year' }[this.period]}</span>` : nothing}
           </div>
           <div class="controls">
             <button class="round nav gl" aria-label="Previous period" @click=${() => this.shift(-1)}><ha-icon icon="mdi:chevron-left"></ha-icon></button>
@@ -453,10 +497,13 @@ export class HomeViewEnergyPopup extends PopupContent {
         display: flex;
         flex-direction: column;
       }
+      /* Each total: label and change on the left, the figure on the right, so a narrow column still reads cleanly. */
       .sf {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto 44px;
-        column-gap: 8px;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas: 'l v' 'd v';
+        column-gap: 12px;
+        row-gap: 2px;
         align-items: center;
         padding: 14px 0;
         border-bottom: 1px solid var(--_track);
@@ -465,27 +512,38 @@ export class HomeViewEnergyPopup extends PopupContent {
         border-bottom: 0;
       }
       .sfl {
+        grid-area: l;
+        align-self: end;
         font-size: 19px;
         font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .sfd {
-        font-size: 16px;
+        grid-area: d;
+        align-self: start;
+        font-size: 15px;
         font-weight: 600;
       }
+      .sfv {
+        grid-area: v;
+        display: flex;
+        align-items: baseline;
+        gap: 4px;
+        white-space: nowrap;
+      }
       .sf b {
-        font-size: 44px;
+        font-size: 40px;
         font-weight: 600;
         letter-spacing: -0.03em;
         line-height: 1;
-        text-align: right;
       }
       .sf u {
         text-decoration: none;
-        font-size: 18px;
+        font-size: 17px;
         font-weight: 600;
         color: var(--_ink2);
-        align-self: end;
-        padding-bottom: 4px;
       }
       .usage {
         display: flex;
@@ -546,9 +604,83 @@ export class HomeViewEnergyPopup extends PopupContent {
         padding: 24px 0;
         white-space: normal;
       }
-      @media (max-width: 1000px) {
+      /* Narrower sheets: power and totals stack, and the three totals sit side by side as tiles. */
+      @container (max-width: 860px) {
         .top {
-          grid-template-columns: 1fr;
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .sfs {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 12px;
+        }
+        .sf {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-areas: 'l' 'v' 'd';
+          padding: 0;
+          border-bottom: 0;
+        }
+        .sfl {
+          align-self: start;
+        }
+        .big {
+          font-size: 52px;
+        }
+      }
+      /* Phone width: the totals go back to rows, and the period controls take a line of their own. */
+      @container (max-width: 520px) {
+        .panel {
+          padding: 18px;
+        }
+        .sfs {
+          display: block;
+        }
+        .sf {
+          grid-template-columns: minmax(0, 1fr) auto;
+          grid-template-areas: 'l v' 'd v';
+          padding: 12px 0;
+          border-bottom: 1px solid var(--_track);
+        }
+        .sf:last-child {
+          border-bottom: 0;
+        }
+        .sf b {
+          font-size: 34px;
+        }
+        .big {
+          font-size: 46px;
+        }
+        .mid {
+          font-size: 34px;
+        }
+        .controls {
+          width: 100%;
+        }
+        .range {
+          flex: 1;
+          min-width: 0;
+        }
+        .controls .seg {
+          width: 100%;
+        }
+        .seg button {
+          flex: 1;
+          padding: 0 8px;
+        }
+        .bars {
+          height: 190px;
+          gap: 3px;
+        }
+        .blab {
+          font-size: 12px;
+          overflow: visible;
+        }
+        .chart {
+          grid-template-columns: 40px minmax(0, 1fr);
+        }
+        .yaxis,
+        .xaxis {
+          font-size: 13px;
         }
       }
     `,

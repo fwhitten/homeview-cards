@@ -1,15 +1,15 @@
 import { css, html, nothing, svg, type PropertyValues } from 'lit';
 import { state } from 'lit/decorators.js';
 import { HomeViewCard, type BaseCardConfig } from '../core/base-card';
-import type { GridOptions } from '../core/types';
+import type { GridOptions, HomeAssistant } from '../core/types';
 import { fetchStatistics } from '../core/history';
 import { smoothPath } from '../core/chart';
-import { areaName, sensorInArea } from '../core/areas';
+import { areaName, entitiesInArea, sensorInArea } from '../core/areas';
 import { fixed, numericState } from '../core/format';
 import { defineElement, registerCard } from '../core/register';
 import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
 
-type ComfortState = 'pleasant' | 'too_warm' | 'cold' | 'dry' | 'humid';
+export type ComfortState = 'pleasant' | 'too_warm' | 'cold' | 'dry' | 'humid';
 
 export interface ComfortCardConfig extends BaseCardConfig {
   /** Use an area's sensors, or pick them. Inferred when left out. */
@@ -18,6 +18,8 @@ export interface ComfortCardConfig extends BaseCardConfig {
   area?: string;
   temperature_entity?: string;
   humidity_entity?: string;
+  /** The room's thermostat, for the target and heating history in the pop-up. Empty: the area's climate entity. */
+  climate_entity?: string;
   /** A: the comfort gauge. C: two scales with the comfort band shaded. */
   style?: 'gauge' | 'scales';
   /** Filled in the comfort colour, or glass with the colour on the state text. */
@@ -34,14 +36,14 @@ export interface ComfortCardConfig extends BaseCardConfig {
   history_hours?: number;
 }
 
-interface Range {
+export interface Range {
   min: number;
   max: number;
   outerMin: number;
   outerMax: number;
 }
 
-const STATES: Record<ComfortState, { label: string; fill: string; ink: string }> = {
+export const STATES: Record<ComfortState, { label: string; fill: string; ink: string }> = {
   pleasant: { label: 'Pleasant', fill: 'rgba(47,107,71,.88)', ink: 'var(--hv-comfort-pleasant, #7BE0A0)' },
   too_warm: { label: 'Too warm', fill: 'rgba(138,67,33,.9)', ink: 'var(--hv-comfort-warm, #FFA36E)' },
   cold: { label: 'Cold', fill: 'rgba(45,90,134,.9)', ink: 'var(--hv-comfort-cold, #8CC4FF)' },
@@ -55,7 +57,7 @@ const position = (v: number, r: Range) => clamp((v - (r.min + r.max) / 2) / Math
 const fraction = (v: number, r: Range) => clamp((v - r.outerMin) / (r.outerMax - r.outerMin), 0, 1);
 
 /** The comfort model from Comfort-Card: which state, and where on the gauge. */
-const comfort = (t: number, h: number, tr: Range, hr: Range) => {
+export const comfort = (t: number, h: number, tr: Range, hr: Range) => {
   const dt = deviation(t, tr);
   const dh = deviation(h, hr);
   let st: ComfortState = 'pleasant';
@@ -76,7 +78,15 @@ const gauge = (t: number, h: number, tr: Range, hr: Range) => {
   return { x, y };
 };
 
-const comfortSource = (c: Record<string, any>): string => c.source ?? (c.temperature_entity || c.humidity_entity ? 'sensors' : 'area');
+export const comfortSource = (c: Record<string, any>): string => c.source ?? (c.temperature_entity || c.humidity_entity ? 'sensors' : 'area');
+
+/** The temperature and humidity sensors (and thermostat) a comfort card reads. */
+export const comfortSensors = (hass: HomeAssistant, c: Partial<ComfortCardConfig>): { temp?: string; hum?: string; climate?: string } => {
+  const climate = c.climate_entity ?? (c.area ? entitiesInArea(hass, c.area, 'climate')[0] : undefined);
+  if (comfortSource(c) === 'sensors') return { temp: c.temperature_entity, hum: c.humidity_entity, climate };
+  if (!c.area) return { climate };
+  return { temp: c.temperature_entity ?? sensorInArea(hass, c.area, 'temperature'), hum: c.humidity_entity ?? sensorInArea(hass, c.area, 'humidity'), climate };
+};
 
 const EDITOR: EditorSpec = {
   schema: (c) => [
@@ -87,6 +97,7 @@ const EDITOR: EditorSpec = {
           { name: 'temperature_entity', required: true, selector: { entity: { domain: 'sensor', device_class: 'temperature' } } },
           { name: 'humidity_entity', required: true, selector: { entity: { domain: 'sensor', device_class: 'humidity' } } },
         ]),
+    { name: 'climate_entity', selector: { entity: { domain: 'climate' } } },
     { name: 'name', selector: { text: {} } },
     {
       type: 'grid',
@@ -123,13 +134,14 @@ const EDITOR: EditorSpec = {
     source: 'Sensors',
     temperature_entity: 'Temperature sensor',
     humidity_entity: 'Humidity sensor',
+    climate_entity: 'Thermostat',
     history_hours: 'Trail behind the marker',
     temp_min: 'Comfortable from',
     temp_max: 'Comfortable up to',
     humidity_min: 'Humidity from',
     humidity_max: 'Humidity up to',
   },
-  helpers: { history_hours: '0 turns the trail off. Needs sensors with long-term statistics', tap_action: 'Default: more-info' },
+  helpers: { history_hours: '0 turns the trail off. Needs sensors with long-term statistics', tap_action: 'Default: opens the comfort pop-up', climate_entity: "For the pop-up's target and heating history. Empty: the area's thermostat" },
 };
 
 /**
@@ -172,10 +184,11 @@ export class HomeViewComfortCard extends HomeViewCard<ComfortCardConfig> {
   }
 
   private get sensors(): { temp?: string; hum?: string } {
-    const c = this.config;
-    if (comfortSource(c) === 'sensors') return { temp: c.temperature_entity, hum: c.humidity_entity };
-    if (!this.hass || !c.area) return {};
-    return { temp: c.temperature_entity ?? sensorInArea(this.hass, c.area, 'temperature'), hum: c.humidity_entity ?? sensorInArea(this.hass, c.area, 'humidity') };
+    return this.hass ? comfortSensors(this.hass, this.config) : {};
+  }
+
+  protected popupName(): string {
+    return 'comfort';
   }
 
   protected watched() {

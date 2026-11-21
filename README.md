@@ -226,6 +226,12 @@ Forecasts come from `weather/subscribe_forecast`. Home Assistant's weather
 entity has no minute-by-minute rain, so without `rain_entity` the next-hour
 view uses the hourly forecast. `auto` switches to it when rain is due.
 
+Tap opens the weather pop-up: the temperature and conditions with tiles for
+humidity, wind (speed, direction and gusts), feels-like, rain, UV, pressure,
+visibility and cloud cover (whichever the entity reports), the next 48 hours
+as a strip you swipe through (sunrise and sunset slotted in), and the daily
+forecast with each day's range on a shared scale.
+
 ### Clock and ambient clock (depth photos)
 
 ```yaml
@@ -277,6 +283,12 @@ layout: auto     # auto | compact (A, 2×1) | artwork (B, 2×2)
 
 Only the controls the player supports are shown: shuffle, previous,
 play/pause, next, repeat, and mute.
+
+When the player goes idle the card shows the last track it saw playing,
+labelled "Last played", never the player's own idle artwork (a HomePod
+through the Apple TV integration can report something unrelated). Resume
+replays exactly that track on a Music Assistant player; other players only
+take a plain play, which continues whatever they have queued.
 
 ### Energy
 
@@ -357,6 +369,11 @@ history_hours: 3
 Comfort ranges default to 20–24 °C and 40–60 %; set `temp_min`, `temp_max`,
 `humidity_min`, `humidity_max` to change them.
 
+Tap opens the comfort pop-up: temperature and humidity over 6, 12, 24 or 48
+hours against their comfortable bands, the thermostat's target, and when it
+was heating (from the thermostat's `hvac_action`). The thermostat is the
+area's climate entity, or set `climate_entity`.
+
 ### Progress
 
 ```yaml
@@ -382,13 +399,20 @@ entity: vacuum.robot
 style: areas                       # status (A) | areas (B)
 battery_entity: sensor.robot_battery
 areas: [kitchen, hallway, living_room]
+map_entity: image.robot_map        # optional: found on the vacuum's device
 ```
 
 Uses the standard vacuum entity: start, pause, stop, return to dock, locate,
 suction (`fan_speed_list`) and `vacuum.clean_area`. For areas, first map the
 vacuum's segments to Home Assistant areas (vacuum entity settings → **Map
-vacuum segments to areas**). Maps are not part of the vacuum entity, so the
-card doesn't draw one.
+vacuum segments to areas**).
+
+Tap opens the vacuum pop-up: the state, battery and suction; big controls
+(clean or pause, stop, dock, spot clean, locate, as the vacuum supports);
+cleaning by area; the map, from an image or camera entity on the vacuum's
+device (or `map_entity`); and, from the device's other sensors, the last
+clean (area, time) and the parts that wear out (filter, brushes, mop, sensors),
+with bars for the ones reported as a percentage.
 
 ### Agenda
 
@@ -477,6 +501,32 @@ chips:
 | `visibility` | | The same conditions as HA badges and cards: `state`, `numeric_state`, `screen`, `user`, `and`, `or`, `not` |
 | `attention_when` / `success_when` / `alert_when` | | Fills the chip amber, green, or red and pulsing |
 | `tap_action` / `hold_action` / `double_tap_action` | more-info | Any HA action, including `navigate` (hash paths such as `#lights-pop-up` work for Bubble Card pop-ups) |
+| `popup` | | `ev` or `all-lights`: tap opens that HomeView pop-up (a `tap_action` overrides it) |
+
+A chip for a `select` or `input_select` (a heating mode, say) opens a small
+menu of its options on tap, with the current one ticked; pick one to set it.
+
+`popup: ev` opens EV charger controls: the vehicle, the battery's charge now
+and the charge target (wide sliders with ± buttons), and the ready-by time
+(hour and 15-minute steppers, with quick picks). They're found on the same
+device as the chip's entity, so an Ohme charger works as it is; otherwise set
+`vehicle_entity`, `soc_entity`, `target_soc_entity` and `target_time_entity`.
+
+`popup: all-lights` opens every light grouped by area (or just `areas:`).
+Each area has a dimmer for all of its lights that keeps their brightness in
+proportion, its scenes, and a dimmer per light; every dimmer has a power
+button inside it.
+
+```yaml
+  - entity: sensor.ohme_status
+    icon: mdi:ev-plug-type2
+    popup: ev
+  - entity: input_select.heating_mode
+    icon: mdi:radiator
+  - entity: sensor.lights_on
+    color: amber
+    popup: all-lights
+```
 
 #### Progress chips
 

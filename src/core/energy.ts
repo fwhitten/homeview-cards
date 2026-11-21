@@ -376,23 +376,30 @@ export const bucketCount = (hours: number, pointsPerHour: number | undefined, wi
     ? Math.max(2, Math.min(2000, Math.round(hours * pointsPerHour)))
     : Math.max(24, Math.min(600, Math.round((width || 300) / 2)));
 
-/**
- * Net power over the last `hours`, from the same recorder data and with the
- * same bucketing as energy-breakdown-card's power graph.
- */
-export const fetchPowerSeries = async (
-  hass: HomeAssistant,
-  signals: Signal[],
-  hours: number,
-  buckets: number,
-): Promise<Array<number | null>> => {
+/** Raw power readings for a window, fetched once so they can be re-bucketed for any shorter span. */
+export interface PowerSamples {
+  start: number;
+  end: number;
+  data: Record<string, Sample[]>;
+}
+
+export const fetchPowerSamples = async (hass: HomeAssistant, signals: Signal[], hours: number): Promise<PowerSamples> => {
   const ids = [...new Set(signals.map((s) => s.entity))];
-  if (!ids.length) return [];
   const end = new Date();
   const start = new Date(end.getTime() - hours * 3_600_000);
+  if (!ids.length) return { start: start.getTime(), end: end.getTime(), data: {} };
   const fetcher = hours > HISTORY_WINDOW_HOURS ? statisticSamples : historySamples;
-  const data = await fetcher(hass, ids, start, end);
-  const series = signals.map((s) => bucketSamples(data[s.entity] ?? [], start.getTime(), end.getTime(), buckets).map((v) => (v === null ? null : v * s.sign)));
+  return { start: start.getTime(), end: end.getTime(), data: await fetcher(hass, ids, start, end) };
+};
+
+/**
+ * Net power over the last `hours` of the samples, with the same bucketing as
+ * energy-breakdown-card's power graph.
+ */
+export const powerSeries = (samples: PowerSamples, signals: Signal[], hours: number, buckets: number): Array<number | null> => {
+  const end = samples.end;
+  const start = Math.max(samples.start, end - hours * 3_600_000);
+  const series = signals.map((s) => bucketSamples(samples.data[s.entity] ?? [], start, end, buckets).map((v) => (v === null ? null : v * s.sign)));
   return Array.from({ length: buckets }, (_, i) => {
     let total = 0;
     let seen = false;
@@ -404,6 +411,55 @@ export const fetchPowerSeries = async (
     }
     return seen ? total : null;
   });
+};
+
+/**
+ * The highest net power actually reached in the last `hours`, and when: every
+ * reading counts, not the per-point averages the line is drawn from, so a
+ * short spike still shows as the peak.
+ */
+export const powerPeak = (samples: PowerSamples, signals: Signal[], hours: number): { watts: number; at: number } | undefined => {
+  const from = Math.max(samples.start, samples.end - hours * 3_600_000);
+  const events: Array<{ t: number; i: number; v: number | null }> = [];
+  signals.forEach((s, i) => (samples.data[s.entity] ?? []).forEach((r) => events.push({ t: r.t, i, v: r.v })));
+  events.sort((a, b) => a.t - b.t);
+  const now: Array<number | null> = signals.map(() => null);
+  const total = (): number | null => {
+    let sum = 0;
+    let seen = false;
+    now.forEach((v, i) => {
+      if (v === null) return;
+      sum += signals[i].sign * v;
+      seen = true;
+    });
+    return seen ? sum : null;
+  };
+  let best: { watts: number; at: number } | undefined;
+  const consider = (t: number) => {
+    const w = total();
+    if (w !== null && (!best || w > best.watts)) best = { watts: w, at: t };
+  };
+  let k = 0;
+  while (k < events.length && events[k].t < from) now[events[k].i] = events[k++].v;
+  consider(from);
+  for (; k < events.length; k++) {
+    now[events[k].i] = events[k].v;
+    // Readings that arrive together count once, after the last of them.
+    if (k + 1 < events.length && events[k + 1].t === events[k].t) continue;
+    consider(events[k].t);
+  }
+  return best;
+};
+
+/** Net power over the last `hours`, bucketed (see powerSeries). */
+export const fetchPowerSeries = async (
+  hass: HomeAssistant,
+  signals: Signal[],
+  hours: number,
+  buckets: number,
+): Promise<Array<number | null>> => {
+  if (!signals.length) return [];
+  return powerSeries(await fetchPowerSamples(hass, signals, hours), signals, hours, buckets);
 };
 
 const STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];

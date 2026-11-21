@@ -5,6 +5,7 @@ import { cardStyles } from './styles';
 import { GestureController, type DragHandlers, type GestureHandlers } from './gestures';
 import { runAction } from './actions';
 import { resolveMode, store, type Appearance, type Mode } from './store';
+import { usingKeyboard } from './events';
 
 export interface BaseCardConfig extends LovelaceCardConfig {
   entity?: string;
@@ -77,7 +78,14 @@ export abstract class HomeViewCard<C extends BaseCardConfig = BaseCardConfig> ex
     this.resizer = new ResizeObserver(([entry]) => this.resize(entry.contentRect.width, entry.contentRect.height));
     this.resizer.observe(this);
     this.setAutoHeight();
+    this.addEventListener('focusin', this.quietFocus);
   }
+
+  /** A tile focused by a tap, not the keyboard, lets go of focus so no ring stays behind. */
+  private quietFocus = (ev: FocusEvent): void => {
+    const target = ev.composedPath()[0] as HTMLElement | undefined;
+    if (!usingKeyboard() && target?.matches?.('ha-card.tile')) target.blur();
+  };
 
   /**
    * Where nothing gives the card a height (the card editor's preview, a
@@ -113,6 +121,7 @@ export abstract class HomeViewCard<C extends BaseCardConfig = BaseCardConfig> ex
     super.disconnectedCallback();
     this.unsubSettings?.();
     this.resizer?.disconnect();
+    this.removeEventListener('focusin', this.quietFocus);
   }
 
   protected shouldUpdate(changed: PropertyValues): boolean {
