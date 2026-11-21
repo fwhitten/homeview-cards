@@ -28,8 +28,24 @@ jobs:
 
       - run: npm run build
 
+      # This version's section of CHANGELOG.md becomes the release notes, which
+      # HACS shows in Home Assistant's update dialog.
+      - name: Release notes from the changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## " { if (on) exit; on = ($2 == v) ; next }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "No CHANGELOG.md section for $version: add a '## $version' heading." >&2
+            exit 1
+          fi
+          cat notes.md
+
       - name: Attach the bundle to the release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/homeview-cards.js
+          body_path: notes.md
           generate_release_notes: true

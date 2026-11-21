@@ -4,6 +4,7 @@ import { PopupContent } from './popup-base';
 import { haptic } from '../core/events';
 import { isUnavailable, numericState, use24h } from '../core/format';
 import { defineElement } from '../core/register';
+import { SizeController } from '../core/measure';
 import type { HassEntity, HomeAssistant } from '../core/types';
 
 interface EvEntities {
@@ -241,9 +242,13 @@ export class HomeViewEvPopup extends PopupContent {
     const now = current ?? initial;
     const charged = initial != null && current != null && current > initial ? current : undefined;
     const toAdd = now != null && target != null ? Math.max(0, target - now) : undefined;
-    const handle = (id: string | undefined, v: number | undefined, label: string) =>
+    // Labels sit centred under their handles, but turn away from each other when the handles are close (or from the ends).
+    const close = initial != null && target != null && Math.abs(target - initial) < 14;
+    const side = (v: number, other: number | undefined) =>
+      v < 7 ? 'right' : v > 93 ? 'left' : close && other != null ? (v < other ? 'left' : v > other ? 'right' : '') : '';
+    const handle = (id: string | undefined, v: number | undefined, label: string, other: number | undefined) =>
       id && v != null
-        ? html`<div class="handle ${this.dragging?.id === id ? 'held' : ''}" style="left:${v}%" role="slider" aria-label=${label} aria-valuemin="0" aria-valuemax="100" aria-valuenow=${Math.round(v)} @pointerdown=${this.grab(id)}><i></i><span>${label}</span></div>`
+        ? html`<div class="handle ${this.dragging?.id === id ? 'held' : ''} ${side(v, other)}" style="left:${v}%" role="slider" aria-label=${label} aria-valuemin="0" aria-valuemax="100" aria-valuenow=${Math.round(v)} @pointerdown=${this.grab(id)}><i></i><span>${label}</span></div>`
         : nothing;
     return html`<div class="panel">
       <div class="bhead">
@@ -260,8 +265,8 @@ export class HomeViewEvPopup extends PopupContent {
         </div>
         <div class="nub"></div>
         <div class="scale">
-          ${handle(ids.soc, initial, 'Initial')}
-          ${handle(ids.target, target, 'Target')}
+          ${handle(ids.soc, initial, 'Initial', target != null && target === initial ? target + 1 : target)}
+          ${handle(ids.target, target, 'Target', initial != null && target === initial ? initial - 1 : initial)}
         </div>
       </div>
       <div class="steppers">
@@ -269,6 +274,20 @@ export class HomeViewEvPopup extends PopupContent {
         ${ids.target ? this.stepper(ids.target, 'Target') : nothing}
       </div>
     </div>`;
+  }
+
+  private timelineSize = new SizeController(this, '.timeline');
+
+  /** Time markers every 1, 2, 4 or 6 hours: the closest that still leaves room between labels. */
+  private ticks(fmt: (m: number) => string) {
+    const width = this.timelineSize.width || 600;
+    const roomy = use24h(this.hass) ? 64 : 76;
+    const step = [1, 2, 4, 6].find((h) => (width / 24) * h >= roomy) ?? 6;
+    const marks = Array.from({ length: 24 / step + 1 }, (_, i) => i * step);
+    return html`<div class="ticks">${marks.map((h) => {
+      const edge = h === 0 ? 'first' : h === 24 ? 'last' : '';
+      return html`<span class=${edge} style="left:${(h / 24) * 100}%">${fmt(720 + h * 60)}</span>`;
+    })}</div>`;
   }
 
   /**
@@ -299,7 +318,7 @@ export class HomeViewEvPopup extends PopupContent {
         })}
         <b class="nowmark" style="left:${pos(nowMin) * 100}%"></b>
       </div>
-      <div class="ticks">${[720, 1080, 0, 360, 720].map((m) => html`<span>${fmt(m)}</span>`)}</div>
+      ${this.ticks(fmt)}
       ${slots.length ? html`<div class="slotlist">${slots.map((sl) => html`<span>${fmt(sl.from)}–${fmt(sl.to)}</span>`)}</div>` : nothing}
     </div>`;
   }
@@ -468,13 +487,26 @@ export class HomeViewEvPopup extends PopupContent {
         transform: scaleX(1.4);
       }
       .handle span {
-        margin-top: 4px;
+        position: absolute;
+        top: calc(100% - 22px);
+        left: 50%;
+        transform: translateX(-50%);
         font-size: 13px;
         font-weight: 700;
         letter-spacing: 0.04em;
         text-transform: uppercase;
         color: var(--_ink2);
         white-space: nowrap;
+      }
+      /* Turned away from a close neighbour (or the battery's end): the label runs out from the handle's side. */
+      .handle.left span {
+        left: auto;
+        right: 50%;
+        transform: translateX(4px);
+        text-align: right;
+      }
+      .handle.right span {
+        transform: translateX(-4px);
       }
       .steppers {
         display: flex;
@@ -531,12 +563,23 @@ export class HomeViewEvPopup extends PopupContent {
         background: var(--_ink);
       }
       .ticks {
-        display: flex;
-        justify-content: space-between;
+        position: relative;
+        height: 1.3em;
         margin-top: 8px;
         font-size: 14px;
         font-weight: 600;
         color: var(--_ink2);
+      }
+      .ticks span {
+        position: absolute;
+        transform: translateX(-50%);
+        white-space: nowrap;
+      }
+      .ticks span.first {
+        transform: none;
+      }
+      .ticks span.last {
+        transform: translateX(-100%);
       }
       .slotlist {
         display: flex;

@@ -263,7 +263,33 @@ export class HomeViewAllLightsPopup extends PopupContent {
     if (!this.hass) return nothing;
     const groups = this.groups;
     if (!groups.length) return html`<div class="panel sub">No lights found in any area.</div>`;
-    return html`<div class="areas">${groups.map((g) => this.area(g))}</div>`;
+    if (!this.twoColumns) return html`<div class="col">${groups.map((g) => this.area(g))}</div>`;
+    // Two stacks, each area going to the shorter one so far: top edges line up and the columns end close together.
+    const cols: [Group[], Group[]] = [[], []];
+    const height = [0, 0];
+    for (const g of groups) {
+      const i = height[0] <= height[1] ? 0 : 1;
+      cols[i].push(g);
+      height[i] += 2.2 + (g.scenes.length ? 0.8 : 0) + (g.lights.length > 1 ? g.lights.length : 0);
+    }
+    return html`<div class="areas">${cols.map((c) => html`<div class="col">${c.map((g) => this.area(g))}</div>`)}</div>`;
+  }
+
+  /** Two columns of rooms when the sheet is wide enough. */
+  @state() private twoColumns = true;
+  private widthWatch = new ResizeObserver(([e]) => {
+    const two = e.contentRect.width >= 760;
+    if (two !== this.twoColumns) this.twoColumns = two;
+  });
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.widthWatch.observe(this);
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.widthWatch.disconnect();
   }
 
   static styles = [
@@ -276,16 +302,22 @@ export class HomeViewAllLightsPopup extends PopupContent {
       }
       /* Two columns of rooms on a wide sheet, one on a narrow one. */
       .areas {
-        columns: 2 420px;
-        column-gap: 20px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 20px;
+        align-items: start;
+      }
+      .col {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        min-width: 0;
       }
       .area {
         --_px: 24px;
-        break-inside: avoid;
         display: flex;
         flex-direction: column;
         gap: 12px;
-        margin-bottom: 20px;
       }
       .ahead {
         display: flex;
@@ -359,9 +391,6 @@ export class HomeViewAllLightsPopup extends PopupContent {
         }
         .area {
           --_px: 16px;
-        }
-        .areas {
-          columns: 1;
         }
       }
     `,

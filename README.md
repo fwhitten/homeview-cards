@@ -613,6 +613,10 @@ python3 -m http.server 8765
 
 Then open <http://localhost:8765/demo/>.
 
+To release, add a `## x.y.z` section to [CHANGELOG.md](CHANGELOG.md) and push
+a `vx.y.z` tag. The release workflow builds the bundle and publishes that
+section as the release notes, which Home Assistant shows in the update dialog.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

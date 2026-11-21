@@ -49,6 +49,16 @@ export abstract class PopupContent extends LitElement {
         height: auto;
         container-type: inline-size;
       }
+      /*
+       * Inside a pop-up, glass controls are a plain fill: the sheet is already
+       * frosted, and a second blur would pick up (and saturate) whatever part
+       * of the wallpaper sits behind each panel, so the same button would be
+       * a different colour in each one.
+       */
+      .gl {
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+      }
       .panel {
         position: relative;
         box-sizing: border-box;

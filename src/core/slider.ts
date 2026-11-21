@@ -213,8 +213,6 @@ export class HomeViewSlider extends LitElement {
         -webkit-user-select: none;
         -webkit-tap-highlight-color: transparent;
         outline: none;
-        /* Its own layer, so the fill moving never repaints the page around it. */
-        contain: layout paint;
       }
       .track:focus-visible {
         box-shadow: inset 0 0 0 3px var(--_ink);
@@ -225,7 +223,6 @@ export class HomeViewSlider extends LitElement {
         transform-origin: left center;
         opacity: 0.62;
         transition: transform 0.18s ease;
-        will-change: transform;
       }
       /* Under the finger: no easing, so it never lags behind. */
       .track.live .fill {

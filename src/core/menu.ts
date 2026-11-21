@@ -40,10 +40,19 @@ export class HomeViewMenu extends LitElement {
     };
   }
 
+  /** Closes by itself after 10 seconds without a touch. */
+  private idle?: number;
+  private poke = (): void => {
+    window.clearTimeout(this.idle);
+    this.idle = window.setTimeout(this.close, 10_000);
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener('keydown', this.onKey);
     window.addEventListener('resize', this.close);
+    for (const type of ['pointerdown', 'pointermove', 'wheel', 'keydown']) this.addEventListener(type, this.poke, { passive: true });
+    this.poke();
     requestAnimationFrame(() => (this.open = true));
   }
 
@@ -51,6 +60,7 @@ export class HomeViewMenu extends LitElement {
     super.disconnectedCallback();
     window.removeEventListener('keydown', this.onKey);
     window.removeEventListener('resize', this.close);
+    window.clearTimeout(this.idle);
   }
 
   private onKey = (ev: KeyboardEvent): void => {

@@ -53,7 +53,43 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
     this.addEventListener('scroll', this.activity, { capture: true, passive: true });
     // Content asks for its title, subtitle and header buttons to be redrawn when it changes.
     this.addEventListener('hv-popup-refresh', () => this.syncHeader());
+    this.addEventListener('touchstart', this.touchStart, { passive: true });
+    this.addEventListener('touchmove', this.touchMove, { passive: false });
   }
+
+  private touchX = 0;
+  private touchY = 0;
+
+  private touchStart = (ev: TouchEvent): void => {
+    this.touchX = ev.touches[0]?.clientX ?? 0;
+    this.touchY = ev.touches[0]?.clientY ?? 0;
+  };
+
+  /**
+   * Keep vertical swipes inside the pop-up. Safari hands a swipe to the
+   * dashboard behind when the sheet is at its end, can't scroll, or has lost
+   * track of its scroll layer (a re-render can do that), so the page behind
+   * would scroll instead. Let a swipe through only where something in the
+   * pop-up can still scroll that way; sideways swipes (sliders, the hourly
+   * strip, scene rows) are always theirs.
+   */
+  private touchMove = (ev: TouchEvent): void => {
+    if (!this.open || !ev.cancelable || ev.touches.length !== 1) return;
+    const dx = ev.touches[0].clientX - this.touchX;
+    const dy = ev.touches[0].clientY - this.touchY;
+    if (Math.abs(dx) > Math.abs(dy)) return;
+    for (const node of ev.composedPath()) {
+      if (node === this) break;
+      if (!(node instanceof HTMLElement)) continue;
+      const oy = getComputedStyle(node).overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && node.scrollHeight > node.clientHeight + 1) {
+        const atTop = node.scrollTop <= 0;
+        const atEnd = node.scrollTop + node.clientHeight >= node.scrollHeight - 1;
+        if ((dy > 0 && !atTop) || (dy < 0 && !atEnd)) return;
+      }
+    }
+    ev.preventDefault();
+  };
 
   /** Seconds of no interaction before the pop-up closes: the view's popup_timeout, default 60, 0 for never. */
   private get idleMs(): number {
@@ -249,6 +285,7 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
       .scrim {
         position: absolute;
         inset: 0;
+        touch-action: none;
         background: rgba(6, 8, 14, 0.38);
         -webkit-backdrop-filter: blur(16px) saturate(140%);
         backdrop-filter: blur(16px) saturate(140%);
@@ -274,6 +311,8 @@ export class HomeViewPopupHost extends LitElement implements PopupHostElement {
         padding: 30px 36px 34px;
         border-radius: 40px;
         overflow: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
         background: radial-gradient(120% 60% at 0% 0%, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 50%),
           var(--hv-popup-background, rgba(30, 32, 44, 0.58));
         box-shadow: inset 1.5px 1.5px 0 rgba(255, 255, 255, 0.35), inset -1px -1px 0 rgba(255, 255, 255, 0.12),
