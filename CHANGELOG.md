@@ -3,6 +3,11 @@
 Each release's section here is published as its release notes, which Home
 Assistant shows in the update dialog (Settings → Updates).
 
+## 0.4.12
+
+### Changed
+- **Energy pop-up:** comparisons show the percentage only again (e.g. "↑ 30% vs yesterday"). Looking back at an earlier day, week or month, they read "vs the day before" and so on.
+
 ## 0.4.11
 
 ### Added
