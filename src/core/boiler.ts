@@ -1,5 +1,6 @@
 import type { HassEntity, HomeAssistant } from './types';
 import { numericState } from './format';
+import { fetchHistory, fetchStatistics, samples } from './history';
 
 export interface BoilerZone {
   name?: string;
@@ -26,7 +27,65 @@ export interface BoilerEntities {
   indoor_entity?: string;
   heating_energy_entity?: string;
   hot_water_energy_entity?: string;
+  /**
+   * kWh per unit of the gas entities. Empty: from their unit (Wh, kWh, MWh,
+   * or m³ at 11.2 kWh each); a counter with no unit is taken as Wh, as
+   * Vaillant's eBUS energy counters (PrEnergyCountHc1/Hwc1) appear to be.
+   */
+  gas_scale?: number;
 }
+
+/** kWh per unit of a gas or energy entity. */
+export const gasScale = (st: HassEntity | undefined, cfg: BoilerEntities): number => {
+  if (typeof cfg.gas_scale === 'number' && cfg.gas_scale > 0) return cfg.gas_scale;
+  const unit = String(st?.attributes.unit_of_measurement ?? '').trim();
+  if (unit === 'kWh') return 1;
+  if (unit === 'MWh') return 1000;
+  if (unit === 'm³' || unit === 'm3') return 11.2;
+  if (unit === 'ft³' || unit === 'ft3') return 0.317;
+  return 0.001;
+};
+
+/**
+ * Gas used (kWh) in each bucket. Meters with long-term statistics use their
+ * hourly change; a plain counter (no state_class) uses its history, adding
+ * up every rise, so a counter that resets doesn't count backwards.
+ */
+export const gasBuckets = async (
+  hass: HomeAssistant,
+  id: string | undefined,
+  buckets: Array<{ start: Date; end: Date }>,
+  cfg: BoilerEntities,
+): Promise<number[]> => {
+  const st = id ? hass.states[id] : undefined;
+  if (!id || !st || !buckets.length) return buckets.map(() => 0);
+  const scale = gasScale(st, cfg);
+  const from = buckets[0].start;
+  const to = buckets[buckets.length - 1].end;
+  if (['total', 'total_increasing'].includes(st.attributes.state_class)) {
+    const res = await fetchStatistics(hass, [id], from, new Date(Math.min(Date.now(), to.getTime())), 'hour', ['change']);
+    const out = buckets.map(() => 0);
+    for (const r of res[id] ?? []) {
+      const t = typeof r.start === 'number' ? r.start : Date.parse(String(r.start));
+      const i = buckets.findIndex((b) => t >= b.start.getTime() && t < b.end.getTime());
+      if (i >= 0) out[i] += (r.change ?? 0) * scale;
+    }
+    return out;
+  }
+  const hours = Math.ceil((Date.now() - from.getTime()) / 3_600_000) + 1;
+  const hist = await fetchHistory(hass, [id], hours, { ttlMs: 2 * 60_000 });
+  const pts = samples(hist[id]);
+  const out = buckets.map(() => 0);
+  let prev: number | undefined;
+  for (const [t, v] of pts) {
+    if (prev !== undefined && v > prev) {
+      const i = buckets.findIndex((b) => t >= b.start.getTime() && t < b.end.getTime());
+      if (i >= 0) out[i] += (v - prev) * scale;
+    }
+    prev = v;
+  }
+  return out;
+};
 
 export type BoilerMode = 'heating' | 'hot_water' | 'overrun' | 'idle';
 
@@ -147,6 +206,7 @@ export const BOILER_ENTITY_SCHEMA = [
       { name: 'indoor_entity', selector: { entity: { domain: ['sensor', 'climate'] } } },
       { name: 'heating_energy_entity', selector: { entity: { domain: 'sensor' } } },
       { name: 'hot_water_energy_entity', selector: { entity: { domain: 'sensor' } } },
+      { name: 'gas_scale', selector: { number: { min: 0, step: 'any', mode: 'box', unit_of_measurement: 'kWh per unit' } } },
     ],
   },
 ];

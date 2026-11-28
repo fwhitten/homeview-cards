@@ -3,6 +3,19 @@
 Each release's section here is published as its release notes, which Home
 Assistant shows in the update dialog (Settings → Updates).
 
+## 0.4.13
+
+### Added
+- **Boiler pop-up:** a Gas graph, heating and hot water stacked, by the hour over 24 hours or by the day over 7 days.
+- **Boiler:** gas can come from a running counter without statistics, such as Vaillant's eBUS `PrEnergyCountHc1` / `PrEnergyCountHwc1` (read as Wh), and `gas_scale` sets the units if needed.
+
+### Changed
+- **Weather card:** new rain: drops at many depths and speeds, slanted by a gusting wind, splashing on the forecast panel, with the odd lightning flash in thunderstorms. It pauses when off screen.
+
+### Fixed
+- **Power graph:** the scale fits the line again, rather than a brief spike (which still shows as the peak).
+- **Boiler pop-up:** Gas today counts what a counter added since midnight, rather than showing its running total.
+
 ## 0.4.12
 
 ### Changed

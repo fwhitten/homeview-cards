@@ -25,8 +25,14 @@ const EDITOR: EditorSpec = {
     indoor_entity: 'Indoor temperature',
     heating_energy_entity: 'Gas used for heating',
     hot_water_energy_entity: 'Gas used for hot water',
+    gas_scale: 'Gas counter scale',
   },
-  helpers: { tap_action: 'Default: opens the boiler pop-up', zones: 'A zone shows Heating while its heat-call entity is on, or its thermostat reports heating' },
+  helpers: {
+    tap_action: 'Default: opens the boiler pop-up',
+    zones: 'A zone shows Heating while its heat-call entity is on, or its thermostat reports heating',
+    heating_energy_entity: 'A gas or energy meter, or a running counter such as PrEnergyCountHc1',
+    gas_scale: 'Empty: from the unit (Wh, kWh, m³); a counter with no unit is read as Wh. Set it if the totals look wrong, e.g. 0.001 for Wh',
+  },
 };
 
 /**

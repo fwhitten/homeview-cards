@@ -345,8 +345,9 @@ pump_entity: sensor.boiler_pump
 dhw_temp_entity: sensor.boiler_hot_water_temperature
 dhw_active_entity: binary_sensor.boiler_hot_water_active
 outdoor_entity: sensor.outdoor_temperature
-heating_energy_entity: sensor.boiler_heating_energy
-hot_water_energy_entity: sensor.boiler_hot_water_energy
+heating_energy_entity: sensor.boiler_heating_energy     # a gas meter, or a counter like PrEnergyCountHc1
+hot_water_energy_entity: sensor.boiler_hot_water_energy  # …PrEnergyCountHwc1
+gas_scale: 0.001     # optional: kWh per unit; empty = from the unit, unitless counters read as Wh
 zones:
   - name: Radiators
     climate_entity: climate.radiators
@@ -356,6 +357,14 @@ zones:
 Mode logic follows [Boiler Cards](https://github.com/fwhitten/ha-boiler-cards):
 hot water if `dhw_active_entity` is on (or inferred), else heating if any zone
 calls, else pump overrun, else idle.
+
+With gas entities, the pop-up shows gas today and a **Gas** graph: heating
+and hot water stacked, by the hour over 24 hours or by the day over 7 days.
+Meters with long-term statistics use those; a running counter without them
+(such as Vaillant's eBUS `PrEnergyCountHc1` / `PrEnergyCountHwc1`) uses its
+history, counting every rise. Units come from the entity (Wh, kWh, MWh, or m³
+at 11.2 kWh each); a counter with no unit is read as Wh. If the totals don't
+match your gas meter, set `gas_scale` to the kWh each unit stands for.
 
 ### Comfort
 

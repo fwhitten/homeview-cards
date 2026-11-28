@@ -368,7 +368,9 @@ export class HomeViewEnergyCard extends HomeViewCard<EnergyCardConfig> {
     const base = labels ? H - 30 : H - 1;
     const top = 3;
     const thresholds = this.config.thresholds?.length ? this.config.thresholds : DEFAULT_THRESHOLDS;
-    const max = this.config.y_max && this.config.y_max > 0 ? this.config.y_max : niceMax(Math.max(this.peak ?? 0, 100), 2);
+    // The scale follows the line itself; a brief spike shows in Peak, not by flattening the graph.
+    const linePeak = Math.max(0, ...this.readings);
+    const max = this.config.y_max && this.config.y_max > 0 ? this.config.y_max : niceMax(Math.max(linePeak, 100), 2);
     const { line, area: fill } = gappedPaths(this.spark, 0, W, top, base, max, H);
     const stops = gradientStops(thresholds, max);
     const id = this.gradientId;

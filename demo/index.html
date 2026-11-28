@@ -58,6 +58,8 @@
     'sensor.flow': st('sensor.flow', '62', { unit_of_measurement: '°C' }),
     'sensor.return': st('sensor.return', '48', { unit_of_measurement: '°C' }),
     'binary_sensor.flame': st('binary_sensor.flame', 'on', {}),
+    'sensor.boiler_prenergycounthc1': st('sensor.boiler_prenergycounthc1', '10397010', { friendly_name: 'PrEnergyCountHc1' }),
+    'sensor.boiler_prenergycounthwc1': st('sensor.boiler_prenergycounthwc1', '2210400', { friendly_name: 'PrEnergyCountHwc1' }),
     'sensor.bed_temp': st('sensor.bed_temp', '21.6', { device_class: 'temperature', unit_of_measurement: '°C' }),
     'sensor.bed_hum': st('sensor.bed_hum', '52', { device_class: 'humidity', unit_of_measurement: '%' }),
     'sensor.dishwasher': st('sensor.dishwasher', '62', { friendly_name: 'Dishwasher', unit_of_measurement: '%' }),
@@ -197,6 +199,22 @@
         }
         return out;
       }
+      if (msg.type === 'history/history_during_period' && msg.entity_ids.some((id) => id.includes('prenergycount'))) {
+        // eBUS energy counters: Wh that only ever rise, in bursts while the burner runs.
+        const start = Date.parse(msg.start_time), out = {};
+        for (const id of msg.entity_ids) {
+          const water = id.includes('hwc');
+          let v = water ? 2190000 : 10379000, rows = [];
+          for (let t = start; t < now; t += 10 * 60e3) {
+            const h = new Date(t).getHours();
+            const on = water ? (h === 7 || h === 19) : (h >= 6 && h < 9) || (h >= 16 && h < 22);
+            if (on) v += water ? 1600 : 700 + Math.round(Math.random() * 300);
+            rows.push({ s: String(v), lu: t / 1000 });
+          }
+          out[id] = rows;
+        }
+        return out;
+      }
       if (msg.type === 'history/history_during_period') {
         const out = {};
         for (const id of msg.entity_ids) {
@@ -242,7 +260,7 @@
     { type: 'custom:homeview-media-card', entity: 'media_player.living', view_layout: { column: 3, row: 3, column_span: 2, row_span: 1 } },
     { type: 'custom:homeview-light-card', area: 'living', view_layout: { column: 5, row: 3 } },
     { type: 'custom:homeview-light-card', entity: 'light.kitchen', view_layout: { column: 6, row: 3 } },
-    { type: 'custom:homeview-boiler-card', flow_temp_entity: 'sensor.flow', return_temp_entity: 'sensor.return', flame_entity: 'binary_sensor.flame', zones: [{ name: 'Radiators', climate_entity: 'climate.living' }], view_layout: { column: 3, row: 4 } },
+    { type: 'custom:homeview-boiler-card', flow_temp_entity: 'sensor.flow', return_temp_entity: 'sensor.return', flame_entity: 'binary_sensor.flame', heating_energy_entity: 'sensor.boiler_prenergycounthc1', hot_water_energy_entity: 'sensor.boiler_prenergycounthwc1', zones: [{ name: 'Radiators', climate_entity: 'climate.living' }], view_layout: { column: 3, row: 4 } },
     { type: 'custom:homeview-light-card', entity: 'light.bedroom', view_layout: { column: 4, row: 4 } },
     { type: 'custom:homeview-progress-card', entity: 'sensor.dishwasher', secondary_entities: ['sensor.dishwasher_left'], view_layout: { column: 5, row: 4, column_span: 2, row_span: 1 } },
     { type: 'custom:homeview-scene-card', entity: 'scene.movie', color: '#7D6BFF', note: 'Lights 10%, TV on', view_layout: { screen: 2 } },

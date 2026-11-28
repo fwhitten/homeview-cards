@@ -1,8 +1,8 @@
 import { css, html, nothing, svg } from 'lit';
 import { state } from 'lit/decorators.js';
 import { PopupContent } from './popup-base';
-import { MODE_STYLE, boilerMode, pumpState, tempOf, zoneHeating, type BoilerEntities, type BoilerZone } from '../core/boiler';
-import { fetchHistory, fetchStatistics, samples, type CompressedState } from '../core/history';
+import { MODE_STYLE, boilerMode, gasBuckets, pumpState, tempOf, zoneHeating, type BoilerEntities, type BoilerZone } from '../core/boiler';
+import { fetchHistory, samples, type CompressedState } from '../core/history';
 import { linePath } from '../core/chart';
 import { fixed, numericState, time } from '../core/format';
 import { startOfDay } from '../core/energy';
@@ -16,6 +16,10 @@ export class HomeViewBoilerPopup extends PopupContent {
   @state() private hours = 24;
   @state() private hist: Record<string, CompressedState[]> = {};
   @state() private gas: { heating?: number; hot_water?: number } = {};
+  /** The gas graph: the last 24 hours by the hour, or the last 7 days by the day. */
+  @state() private gasSpan: 'day' | 'week' = 'day';
+  @state() private gasBars?: { labels: string[]; heating: number[]; hot_water: number[]; current: number };
+  private gasFor?: string;
   private loadedFor?: number;
 
   private get b(): BoilerEntities {
@@ -37,6 +41,10 @@ export class HomeViewBoilerPopup extends PopupContent {
       void this.loadHistory();
       void this.loadGas();
     }
+    if (this.hass && this.gasFor !== this.gasSpan && (this.b.heating_energy_entity || this.b.hot_water_energy_entity)) {
+      this.gasFor = this.gasSpan;
+      void this.loadGasBars();
+    }
   }
 
   private async loadHistory(): Promise<void> {
@@ -56,22 +64,82 @@ export class HomeViewBoilerPopup extends PopupContent {
     }
   }
 
-  /** Today's gas for heating and hot water: the statistics change for meters, the state otherwise. */
+  /** Today's gas for heating and hot water, in kWh: what each meter or counter has added since midnight. */
   private async loadGas(): Promise<void> {
     const hass = this.hass!;
-    const read = async (id?: string): Promise<number | undefined> => {
-      const st = id ? hass.states[id] : undefined;
-      if (!st) return undefined;
-      const scale = ({ Wh: 0.001, MWh: 1000 } as Record<string, number>)[st.attributes.unit_of_measurement] ?? 1;
-      if (['total', 'total_increasing'].includes(st.attributes.state_class)) {
-        const now = new Date();
-        const res = await fetchStatistics(hass, [id!], startOfDay(now), now, 'hour', ['change']).catch(() => ({}) as Record<string, never>);
-        return (res[id!] ?? []).reduce((n, v) => n + (v.change ?? 0), 0) * scale;
-      }
-      const v = numericState(st);
-      return v != null ? v * scale : undefined;
-    };
+    const today = [{ start: startOfDay(new Date()), end: new Date(Date.now() + 60_000) }];
+    const read = async (id?: string): Promise<number | undefined> =>
+      id && hass.states[id] ? (await gasBuckets(hass, id, today, this.b).catch(() => [undefined]))[0] : undefined;
     this.gas = { heating: await read(this.b.heating_energy_entity), hot_water: await read(this.b.hot_water_energy_entity) };
+  }
+
+  private async loadGasBars(): Promise<void> {
+    const hass = this.hass!;
+    const now = new Date();
+    let buckets: Array<{ start: Date; end: Date }>;
+    let labels: string[];
+    if (this.gasSpan === 'week') {
+      const day0 = startOfDay(now);
+      buckets = Array.from({ length: 7 }, (_, i) => {
+        const start = new Date(day0.getFullYear(), day0.getMonth(), day0.getDate() - 6 + i);
+        return { start, end: new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1) };
+      });
+      const fmt = new Intl.DateTimeFormat(hass.locale.language, { weekday: 'short' });
+      labels = buckets.map((b, i) => (i === 6 ? 'Today' : fmt.format(b.start)));
+    } else {
+      const hour0 = new Date(now);
+      hour0.setMinutes(0, 0, 0);
+      buckets = Array.from({ length: 24 }, (_, i) => {
+        const start = new Date(hour0.getTime() - (23 - i) * 3_600_000);
+        return { start, end: new Date(start.getTime() + 3_600_000) };
+      });
+      labels = buckets.map((b) => (b.start.getHours() % 6 === 0 ? String(b.start.getHours()).padStart(2, '0') : ''));
+    }
+    try {
+      const [heating, hot_water] = await Promise.all([
+        gasBuckets(hass, this.b.heating_energy_entity, buckets, this.b),
+        gasBuckets(hass, this.b.hot_water_energy_entity, buckets, this.b),
+      ]);
+      this.gasBars = { labels, heating, hot_water, current: buckets.length - 1 };
+    } catch {
+      this.gasBars = undefined;
+    }
+  }
+
+  /** Gas by the hour (24 h) or by the day (7 days), heating and hot water stacked. */
+  private gasChart() {
+    const b = this.b;
+    if (!b.heating_energy_entity && !b.hot_water_energy_entity) return nothing;
+    const hass = this.hass!;
+    const g = this.gasBars;
+    const totals = g ? g.heating.map((h, i) => h + g.hot_water[i]) : [];
+    const sum = totals.reduce((a, v) => a + v, 0);
+    const max = Math.max(0.1, ...totals) * 1.08;
+    const heat = g ? g.heating.reduce((a, v) => a + v, 0) : 0;
+    const water = g ? g.hot_water.reduce((a, v) => a + v, 0) : 0;
+    return html`<div class="panel gas">
+      <div class="hhead">
+        <div>
+          <h3 class="sec">Gas</h3>
+          <div class="gtotal">${fixed(hass, sum, 1)} <span class="faint">kWh ${this.gasSpan === 'day' ? 'in 24 hours' : 'in 7 days'}</span></div>
+          <div class="sub tiny">
+            ${b.heating_energy_entity ? html`<span class="key"><i style="background:#FF8A3D"></i>Heating ${fixed(hass, heat, 1)}</span>` : nothing}
+            ${b.hot_water_energy_entity ? html`<span class="key"><i style="background:#5AC8FA"></i>Hot water ${fixed(hass, water, 1)}</span>` : nothing}
+          </div>
+        </div>
+        <div class="seg">${(['day', 'week'] as const).map((k) => html`<button aria-pressed=${this.gasSpan === k} @click=${() => (this.gasSpan = k)}>${k === 'day' ? '24h' : '7d'}</button>`)}</div>
+      </div>
+      ${g
+        ? html`<div class="gbars ${this.gasSpan}" role="img" aria-label="Gas used: ${fixed(hass, sum, 1)} kWh">
+            ${totals.map((t, i) => html`<div class="gbar ${i === g.current ? 'now' : ''}" title="${fixed(hass, t, 2)} kWh">
+              <div class="gstack">${t > 0
+                ? html`<div style="height:${(g.heating[i] / max) * 100}%;background:#FF8A3D"></div><div style="height:${(g.hot_water[i] / max) * 100}%;background:#5AC8FA"></div>`
+                : html`<div style="height:2%;background:var(--_track)"></div>`}</div>
+              <div class="glab">${g.labels[i]}</div>
+            </div>`)}
+          </div>`
+        : html`<div class="sub">Loading…</div>`}
+    </div>`;
   }
 
   private diagram() {
@@ -251,6 +319,7 @@ export class HomeViewBoilerPopup extends PopupContent {
           </div>
         </div>
       </div>
+      ${this.gasChart()}
       ${this.history()}
     `;
   }
@@ -262,6 +331,59 @@ export class HomeViewBoilerPopup extends PopupContent {
         display: flex;
         flex-direction: column;
         gap: 20px;
+      }
+      .gtotal {
+        font-size: 34px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+      .key {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-right: 14px;
+      }
+      .key i {
+        width: 10px;
+        height: 10px;
+        border-radius: 3px;
+      }
+      .gbars {
+        display: flex;
+        align-items: stretch;
+        gap: 4px;
+        height: 170px;
+        margin-top: 16px;
+      }
+      .gbars.week {
+        gap: 12px;
+      }
+      .gbar {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .gstack {
+        flex: 1;
+        display: flex;
+        flex-direction: column-reverse;
+        gap: 2px;
+      }
+      .gstack div {
+        border-radius: 3px;
+      }
+      .gbar:not(.now) .gstack {
+        opacity: 0.8;
+      }
+      .glab {
+        height: 18px;
+        text-align: center;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--_ink2);
+        white-space: nowrap;
       }
       .grid {
         display: grid;

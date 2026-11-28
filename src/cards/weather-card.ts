@@ -5,6 +5,7 @@ import type { GridOptions } from '../core/types';
 import { num, time } from '../core/format';
 import { defineElement, registerCard } from '../core/register';
 import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
+import '../core/rain';
 
 export interface WeatherCardConfig extends BaseCardConfig {
   entity: string;
@@ -149,6 +150,9 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
 
   protected updated(changed: PropertyValues): void {
     super.updated(changed);
+    // Rain lands on the forecast panel.
+    const rain = this.renderRoot.querySelector('homeview-rain') as (HTMLElement & { surface?: HTMLElement }) | null;
+    if (rain) rain.surface = (this.renderRoot.querySelector('.panel') as HTMLElement | null) ?? undefined;
     if (this.hass && this.config && this.subscribedTo !== this.config.entity) this.subscribe();
   }
 
@@ -294,7 +298,12 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
         ? html`<div class="cloud c1 anim" aria-hidden="true"></div>
             <div class="cloud c2 anim" aria-hidden="true"></div>`
         : nothing}
-      ${wet ? html`<div class="rain anim" aria-hidden="true"></div>` : nothing}
+      ${wet
+        ? html`<homeview-rain
+            .intensity=${condition === 'pouring' || condition === 'hail' ? 'heavy' : condition === 'snowy-rainy' ? 'light' : 'moderate'}
+            .lightning=${condition === 'lightning-rainy'}
+          ></homeview-rain>`
+        : nothing}
       ${snow ? html`<div class="snow anim" aria-hidden="true"></div>` : nothing}
       ${(night || condition === 'clear-night') && !clouds ? html`<div class="stars anim" aria-hidden="true"></div>` : nothing}
       ${condition === 'sunny' && !night ? html`<div class="sun anim" aria-hidden="true"></div>` : nothing}
@@ -552,19 +561,14 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
         animation-duration: 13s;
         animation-direction: alternate-reverse;
       }
-      .rain,
       .snow {
         position: absolute;
         left: 0;
         right: 0;
         top: -180px;
         height: calc(100% + 180px);
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='90'%3E%3Cpath d='M8 6l-3 14M34 40l-3 14M52 68l-3 14M22 60l-2 10M46 12l-2 10' stroke='%23cfe3ff' stroke-opacity='.34' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E");
-        animation: fall 0.9s linear infinite;
-      }
-      .snow {
+        animation: fall 6s linear infinite;
         background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='70' height='90'%3E%3Cg fill='%23fff' fill-opacity='.5'%3E%3Ccircle cx='10' cy='12' r='2'/%3E%3Ccircle cx='40' cy='44' r='1.6'/%3E%3Ccircle cx='60' cy='70' r='2.2'/%3E%3Ccircle cx='24' cy='66' r='1.4'/%3E%3C/g%3E%3C/svg%3E");
-        animation-duration: 6s;
       }
       .stars {
         position: absolute;

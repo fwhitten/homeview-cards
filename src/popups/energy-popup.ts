@@ -283,8 +283,9 @@ export class HomeViewEnergyPopup extends PopupContent {
     // Drawn at the chart's real width, so no stretching (and no non-scaling-stroke, which WebKit mis-colours).
     const W = this.chartSize.width || 640;
     const H = 132;
-    const peak = this.peak ?? 0;
-    const max = this.cfg.y_max > 0 ? this.cfg.y_max : niceMax(Math.max(peak, 100));
+    // The scale follows the line itself; a brief spike shows in Peak, not by flattening the graph.
+    const linePeak = Math.max(0, ...this.power.filter((v): v is number => v !== null));
+    const max = this.cfg.y_max > 0 ? this.cfg.y_max : niceMax(Math.max(linePeak, 100));
     const { line, area } = gappedPaths(this.power, 0, W, 2, H - 1, max, H);
     const stops = gradientStops(this.thresholds, max);
     const step = max / 4;
