@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HomeView weather gallery</title>
+<style>
+  html, body { margin: 0; background: #0c0f17; color: #fff; font-family: -apple-system, system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 16px; padding: 16px 28px; background: rgba(12, 15, 23, 0.85); backdrop-filter: blur(12px); }
+  h1 { margin: 0; font-size: 22px; flex: 1; }
+  .seg { display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.12); }
+  .seg button { font: inherit; font-size: 15px; font-weight: 600; padding: 8px 16px; border: 0; border-radius: 999px; background: none; color: rgba(255, 255, 255, 0.7); cursor: pointer; }
+  .seg button[aria-pressed='true'] { background: #fff; color: #111; }
+  main { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 28px 24px; padding: 12px 28px 40px; }
+  figure { margin: 0; }
+  figcaption { margin: 0 0 10px; font-size: 15px; font-weight: 600; color: rgba(255, 255, 255, 0.75); }
+  figcaption code { color: #fff; font-size: 14px; }
+  .tile { height: 404px; }
+</style>
+<script>
+  // Minimal stand-ins for the HA frontend elements the cards use.
+  customElements.define('ha-card', class extends HTMLElement {});
+  customElements.define('ha-icon', class extends HTMLElement {
+    static get observedAttributes() { return ['icon']; }
+    set icon(v) { this._i = v; this.render(); } get icon() { return this._i; }
+    attributeChangedCallback(_n, _o, v) { this.icon = v; }
+    render() { this.style.cssText = 'display:inline-flex;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px);border-radius:30%;background:currentColor;opacity:.85;flex:none'; this.title = this._i || ''; }
+  });
+</script>
+</head>
+<body>
+<header>
+  <h1>Weather conditions</h1>
+  <div class="seg" role="group" aria-label="Time of day">
+    <button id="day" aria-pressed="true">Day</button><button id="night" aria-pressed="false">Night</button>
+  </div>
+</header>
+<main id="grid"></main>
+<script type="module">
+  // The cards come from the built bundle next door, so the page needs the local server
+  // (python3 -m http.server 8765 in homeview-cards); a file preview can't reach it.
+  try {
+    await import('../dist/homeview-cards.js?v=' + Date.now());
+  } catch (err) {
+    document.body.innerHTML = `<div style="max-width:560px;margin:80px auto;padding:0 24px;font:17px/1.5 -apple-system,system-ui,sans-serif;color:#fff">
+      <h1 style="font-size:24px">The cards didn't load</h1>
+      <p>This page loads <code>dist/homeview-cards.js</code> from beside it, so it has to be opened through the local web server, not as a file preview.</p>
+      <p>In <code>homeview-cards</code>, run <code>npm run build</code> and <code>python3 -m http.server 8765</code>, then open
+      <a style="color:#7fd0ff" href="http://localhost:8765${location.pathname.replace(/.*\/demo\//, '/demo/')}">http://localhost:8765/demo/…</a>.</p></div>`;
+    throw err;
+  }
+
+  const CONDITIONS = [
+    ['sunny', 'Sunny', 16], ['clear-night', 'Clear night', 9], ['partlycloudy', 'Partly cloudy', 14], ['cloudy', 'Cloudy', 11],
+    ['fog', 'Fog', 7], ['rainy', 'Rainy', 10], ['pouring', 'Pouring', 9], ['lightning', 'Lightning', 13],
+    ['lightning-rainy', 'Thunderstorms', 12], ['hail', 'Hail', 4], ['snowy', 'Snowy', -1], ['snowy-rainy', 'Sleet', 1],
+    ['windy', 'Windy', 12], ['windy-variant', 'Windy and cloudy', 10], ['exceptional', 'Exceptional', 15],
+  ];
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  const st = (entity_id, state, attributes = {}) => ({ entity_id, state, attributes, last_changed: iso(now), last_updated: iso(now) });
+  const states = {};
+  for (const [c, name, t] of CONDITIONS) states[`weather.${c.replace(/-/g, '_')}`] = st(`weather.${c.replace(/-/g, '_')}`, c, { friendly_name: name, temperature: t });
+  const forecast = (c, t) => Array.from({ length: 8 }, (_, i) => ({ datetime: iso(now - (now % 3600e3) + i * 3600e3), condition: c, temperature: t + (i % 3) - 1, precipitation_probability: ['rainy', 'pouring', 'lightning-rainy', 'hail', 'snowy-rainy'].includes(c) ? 70 - i * 5 : 0, precipitation: 0 }));
+  let night = false;
+  const hass = {
+    states, entities: {}, devices: {}, areas: {},
+    config: { time_zone: 'Europe/London', unit_system: { temperature: '°C', length: 'km' } },
+    themes: { darkMode: true }, language: 'en-GB', locale: { language: 'en-GB', time_format: '24' },
+    hassUrl: (p = '') => p, localize: (k) => k,
+    formatEntityState: (s) => s.attributes.friendly_name,
+    callService: async () => ({}), callWS: async () => ({}),
+    connection: {
+      subscribeMessage: async (cb, msg) => {
+        const s = states[msg.entity_id];
+        setTimeout(() => cb({ type: msg.forecast_type, forecast: msg.forecast_type === 'hourly' ? forecast(s.state, s.attributes.temperature) : [{ datetime: iso(now), condition: s.state, temperature: s.attributes.temperature + 3, templow: s.attributes.temperature - 4 }] }), 30);
+        return async () => {};
+      },
+    },
+  };
+
+  const cards = [];
+  const grid = document.getElementById('grid');
+  for (const [c, name] of CONDITIONS) {
+    const fig = document.createElement('figure');
+    fig.innerHTML = `<figcaption>${name} · <code>${c}</code></figcaption>`;
+    const wrap = document.createElement('div');
+    wrap.className = 'tile';
+    const card = document.createElement('homeview-weather-card');
+    card.setConfig({ type: 'custom:homeview-weather-card', entity: `weather.${c.replace(/-/g, '_')}`, forecast: 'hourly' });
+    card.style.cssText = 'display:block;height:100%';
+    card.hass = hass;
+    wrap.append(card);
+    fig.append(wrap);
+    grid.append(fig);
+    cards.push(card);
+  }
+
+  const setNight = (on) => {
+    night = on;
+    hass.states['sun.sun'] = st('sun.sun', on ? 'below_horizon' : 'above_horizon', { next_rising: iso(now + 9 * 3600e3), next_setting: iso(now + 3 * 3600e3) });
+    document.getElementById('day').setAttribute('aria-pressed', String(!on));
+    document.getElementById('night').setAttribute('aria-pressed', String(on));
+    const next = { ...hass, states: { ...hass.states } };
+    cards.forEach((card) => (card.hass = next));
+  };
+  document.getElementById('day').onclick = () => setNight(false);
+  document.getElementById('night').onclick = () => setNight(true);
+  setNight(location.hash === '#night');
+</script>
+</body>
+</html>

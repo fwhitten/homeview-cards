@@ -5,7 +5,7 @@ import type { GridOptions } from '../core/types';
 import { num, time } from '../core/format';
 import { defineElement, registerCard } from '../core/register';
 import { actionsSection, appearanceSection, choose, editorFor, layoutSection, type EditorSpec } from '../core/editor';
-import '../core/rain';
+import { celestial } from '../core/sky';
 
 export interface WeatherCardConfig extends BaseCardConfig {
   entity: string;
@@ -65,7 +65,7 @@ export const sky = (condition: string, night: boolean): string => {
   if (WET.has(condition) || condition === 'lightning') return 'linear-gradient(180deg,#4b5b77 0%,#303b50 58%,#232c3b 100%)';
   if (condition === 'snowy') return 'linear-gradient(180deg,#6d7d96 0%,#4d5a70 60%,#3a4558 100%)';
   if (condition === 'fog') return 'linear-gradient(180deg,#7d8794 0%,#5c6672 100%)';
-  if (night || condition === 'clear-night') return 'linear-gradient(180deg,#1c264e 0%,#36427a 60%,#786896 100%)';
+  if (night || condition === 'clear-night') return 'linear-gradient(180deg,#0b0f1f 0%,#18203d 58%,#363c5c 100%)';
   if (condition === 'cloudy') return 'linear-gradient(180deg,#6b7f9a 0%,#4f6079 100%)';
   if (condition === 'partlycloudy') return 'linear-gradient(180deg,#3f7cc0 0%,#6f9fd0 70%,#9cbad8 100%)';
   return 'linear-gradient(180deg,#2f78d0 0%,#5ea0e6 65%,#8fc1ef 100%)';
@@ -150,9 +150,9 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
 
   protected updated(changed: PropertyValues): void {
     super.updated(changed);
-    // Rain lands on the forecast panel.
-    const rain = this.renderRoot.querySelector('homeview-rain') as (HTMLElement & { surface?: HTMLElement }) | null;
-    if (rain) rain.surface = (this.renderRoot.querySelector('.panel') as HTMLElement | null) ?? undefined;
+    // Rain, hail and snow land on the forecast panel.
+    const sky = this.renderRoot.querySelector('homeview-sky') as (HTMLElement & { surface?: HTMLElement }) | null;
+    if (sky) sky.surface = (this.renderRoot.querySelector('.panel') as HTMLElement | null) ?? undefined;
     if (this.hass && this.config && this.subscribedTo !== this.config.entity) this.subscribe();
   }
 
@@ -288,26 +288,10 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
     </div>`;
   }
 
+  /** The living sky behind the card: one canvas that draws whatever the condition calls for. */
   private animation(condition: string, night: boolean) {
     if (!this.config.show_animation) return nothing;
-    const wet = WET.has(condition);
-    const snow = condition === 'snowy' || condition === 'snowy-rainy';
-    const clouds = wet || snow || ['cloudy', 'partlycloudy', 'fog', 'lightning'].includes(condition);
-    return html`
-      ${clouds
-        ? html`<div class="cloud c1 anim" aria-hidden="true"></div>
-            <div class="cloud c2 anim" aria-hidden="true"></div>`
-        : nothing}
-      ${wet
-        ? html`<homeview-rain
-            .intensity=${condition === 'pouring' || condition === 'hail' ? 'heavy' : condition === 'snowy-rainy' ? 'light' : 'moderate'}
-            .lightning=${condition === 'lightning-rainy'}
-          ></homeview-rain>`
-        : nothing}
-      ${snow ? html`<div class="snow anim" aria-hidden="true"></div>` : nothing}
-      ${(night || condition === 'clear-night') && !clouds ? html`<div class="stars anim" aria-hidden="true"></div>` : nothing}
-      ${condition === 'sunny' && !night ? html`<div class="sun anim" aria-hidden="true"></div>` : nothing}
-    `;
+    return html`<homeview-sky .condition=${condition} .night=${night} .latitude=${this.hass?.config.latitude ?? 0}></homeview-sky>`;
   }
 
   render() {
@@ -326,12 +310,14 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
         : '';
     const name = this.config.name;
     const size = this.size;
+    // When the animated sky has the sun or moon in the icon's spot, it is the icon.
+    const showIcon = !(this.config.show_animation && celestial(condition, night));
 
     if (size === 's' || size === 't') {
       return html`<ha-card class="tile sky clickable" style="background:${sky(condition, night)}" tabindex="0" role="button" aria-label="${label}, ${temp}°">
         ${this.animation(condition, night)}
         <div class="in">
-          <div class="top"><div class="cond sm">${label}</div><ha-icon class="wicon sm" .icon=${icon}></ha-icon></div>
+          <div class="top"><div class="cond sm">${label}</div>${showIcon ? html`<ha-icon class="wicon sm" .icon=${icon}></ha-icon>` : nothing}</div>
           <div><div class="temp sm">${temp != null ? `${num(this.hass, temp, 0)}°` : '—'}</div><div class="hl">${hl}</div></div>
         </div>
       </ha-card>`;
@@ -349,7 +335,7 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
               <div class="temp">${temp != null ? `${num(this.hass, temp, 0)}°` : '—'}</div>
               <div class="hl">${hl}</div>
             </div>
-            ${compact ? nothing : html`<ha-icon class="wicon" .icon=${icon}></ha-icon>`}
+            ${compact || !showIcon ? nothing : html`<ha-icon class="wicon" .icon=${icon}></ha-icon>`}
           </div>
           <div class="panel">${this.showNextHour ? this.rainPanel(compact) : this.hourlyPanel(compact ? 4 : 6)}</div>
         </div>
@@ -538,76 +524,6 @@ export class HomeViewWeatherCard extends HomeViewCard<WeatherCardConfig> {
         font-size: 15px;
         font-weight: 700;
         color: #7fd0ff;
-      }
-      .cloud {
-        position: absolute;
-        border-radius: 50%;
-        background: rgba(255, 255, 255, 0.13);
-        filter: blur(26px);
-        animation: drift 9s ease-in-out infinite alternate;
-      }
-      .c1 {
-        width: 260px;
-        height: 120px;
-        left: 40%;
-        top: 20px;
-      }
-      .c2 {
-        width: 300px;
-        height: 110px;
-        left: -60px;
-        top: 110px;
-        background: rgba(255, 255, 255, 0.08);
-        animation-duration: 13s;
-        animation-direction: alternate-reverse;
-      }
-      .snow {
-        position: absolute;
-        left: 0;
-        right: 0;
-        top: -180px;
-        height: calc(100% + 180px);
-        animation: fall 6s linear infinite;
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='70' height='90'%3E%3Cg fill='%23fff' fill-opacity='.5'%3E%3Ccircle cx='10' cy='12' r='2'/%3E%3Ccircle cx='40' cy='44' r='1.6'/%3E%3Ccircle cx='60' cy='70' r='2.2'/%3E%3Ccircle cx='24' cy='66' r='1.4'/%3E%3C/g%3E%3C/svg%3E");
-      }
-      .stars {
-        position: absolute;
-        inset: 0 0 40% 0;
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='120'%3E%3Cg fill='%23fff'%3E%3Ccircle cx='20' cy='30' r='1.2'/%3E%3Ccircle cx='90' cy='14' r='1'/%3E%3Ccircle cx='130' cy='70' r='1.3'/%3E%3Ccircle cx='60' cy='90' r='1'/%3E%3C/g%3E%3C/svg%3E");
-        animation: twinkle 4s ease-in-out infinite;
-      }
-      .sun {
-        position: absolute;
-        width: 220px;
-        height: 220px;
-        right: -60px;
-        top: -60px;
-        border-radius: 50%;
-        background: radial-gradient(circle, rgba(255, 236, 170, 0.75), rgba(255, 236, 170, 0) 65%);
-        animation: pulse 6s ease-in-out infinite;
-      }
-      @keyframes fall {
-        to {
-          transform: translateY(180px);
-        }
-      }
-      @keyframes drift {
-        from {
-          transform: translateX(-24px);
-        }
-        to {
-          transform: translateX(24px);
-        }
-      }
-      @keyframes twinkle {
-        50% {
-          opacity: 0.4;
-        }
-      }
-      @keyframes pulse {
-        50% {
-          transform: scale(1.08);
-        }
       }
     `,
   ];

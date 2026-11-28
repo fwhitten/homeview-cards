@@ -31,7 +31,18 @@
 <div class="bar"><button id="edit">Toggle edit</button><button id="night">Toggle night</button><button id="popup">Open lights pop-up</button><button id="notify">Fire notification</button></div>
 <script type="module">
   // Cache-busted so a rebuild always shows up on reload.
-  await import('../dist/homeview-cards.js?v=' + Date.now());
+  // The cards come from the built bundle next door, so the page needs the local server
+  // (python3 -m http.server 8765 in homeview-cards); a file preview can't reach it.
+  try {
+    await import('../dist/homeview-cards.js?v=' + Date.now());
+  } catch (err) {
+    document.body.innerHTML = `<div style="max-width:560px;margin:80px auto;padding:0 24px;font:17px/1.5 -apple-system,system-ui,sans-serif;color:#fff">
+      <h1 style="font-size:24px">The cards didn't load</h1>
+      <p>This page loads <code>dist/homeview-cards.js</code> from beside it, so it has to be opened through the local web server, not as a file preview.</p>
+      <p>In <code>homeview-cards</code>, run <code>npm run build</code> and <code>python3 -m http.server 8765</code>, then open
+      <a style="color:#7fd0ff" href="http://localhost:8765${location.pathname.replace(/.*\/demo\//, '/demo/')}">http://localhost:8765/demo/…</a>.</p></div>`;
+    throw err;
+  }
 
   const now = Date.now();
   const iso = (ms) => new Date(ms).toISOString();

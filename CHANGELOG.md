@@ -3,6 +3,19 @@
 Each release's section here is published as its release notes, which Home
 Assistant shows in the update dialog (Settings → Updates).
 
+## 0.4.14
+
+### Changed
+- **Weather card:** every condition has a living sky, drawn on one canvas like the new rain:
+  - **Sunny:** a glowing sun with slowly turning rays and light drifting in the air. The sun takes the icon's place.
+  - **Clear night:** a darker sky with stars that twinkle on their own, the odd shooting star, and the moon in today's real phase (lit from the correct side south of the equator too), in place of the icon.
+  - **Partly cloudy and cloudy:** soft clouds drifting at different depths (over stars at night).
+  - **Fog:** banks of mist drifting through a haze that thickens towards the ground.
+  - **Thunderstorms and lightning:** forked lightning behind the clouds, with the sky flashing.
+  - **Hail:** hailstones that bounce off the forecast panel.
+  - **Snow and sleet:** flakes that sway as they fall and settle in a thin layer along the top of the forecast panel.
+  - **Windy:** gusts streaming across the card, with clouds racing past.
+
 ## 0.4.13
 
 ### Added

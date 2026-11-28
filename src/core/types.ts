@@ -41,6 +41,8 @@ export interface HassConfig {
   time_zone: string;
   unit_system: { temperature: string; length: string };
   currency?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface FrontendLocale {

@@ -620,7 +620,8 @@ npm run lint      # type-check only
 python3 -m http.server 8765
 ```
 
-Then open <http://localhost:8765/demo/>.
+Then open <http://localhost:8765/demo/>. <http://localhost:8765/demo/weather.html>
+shows the weather card in every condition, by day and night.
 
 To release, add a `## x.y.z` section to [CHANGELOG.md](CHANGELOG.md) and push
 a `vx.y.z` tag. The release workflow builds the bundle and publishes that
